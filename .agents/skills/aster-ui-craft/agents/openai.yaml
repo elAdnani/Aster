@@ -1,0 +1,4 @@
+interface:
+  display_name: "Aster UI Craft"
+  short_description: "Polir Aster sans alourdir le produit"
+  default_prompt: "Use $aster-ui-craft to review and improve this Aster interface safely."

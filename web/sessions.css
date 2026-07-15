@@ -1,0 +1,4 @@
+.session-list{display:grid;gap:10px}
+.device-card:not(.current){border-color:var(--line);background:var(--bg)}
+.device-card .session-action{min-height:40px;padding:7px 10px;border:1px solid #e5c3bf;border-radius:9px;color:#9a4c43}
+@media(max-width:760px){.device-card .session-action{grid-column:2;justify-self:start;min-height:44px}}
