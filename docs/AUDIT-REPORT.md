@@ -1,12 +1,12 @@
 # Aster Local — état, audit et feuille de route
 
-Date de l’audit : 15 juillet 2026. Version : prototype `0.1.0`.
+Date de l’audit : 15 juillet 2026. Version : prototype `0.2.0-alpha.2`.
 
 ## Résumé exécutif
 
 Aster est aujourd’hui un prototype local-first utilisable pour créer un compte administrateur, choisir un profil, conserver des conversations séparées et dialoguer avec un moteur Ollama local. Le socle n’utilise aucune dépendance npm d’exécution, ce qui réduit fortement la taille et la surface d’attaque.
 
-Le dépôt peut être publié comme **prototype expérimental**, mais pas encore présenté comme une solution de sécurité achevée, un client distant prêt pour Internet ou une alternative complète à ChatGPT/Codex. Les conversations sont isolées logiquement par profil mais restent en clair sur le disque.
+Le dépôt est publiable comme **prototype expérimental**, mais pas encore présentable comme une solution de sécurité achevée, un client distant prêt pour Internet ou une alternative complète à ChatGPT/Codex. Conversations, projets, tâches et pièces jointes texte sont isolés par profil et chiffrés au repos.
 
 ## Ce qui fonctionne
 
@@ -28,6 +28,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - Projets chiffrés par profil, déplacement des conversations et recherche serveur dans les titres et messages.
 - Amorces Plugins et Bibliothèque encore non persistantes.
 - Planification chiffrée par profil avec tâches, échéances et rattachement aux projets.
+- Pièces jointes TXT, Markdown, JSON et CSV chiffrées, bornées et transmises au modèle comme données non fiables.
 - VPN, Proton VPN et Tor présentés uniquement comme options futures, jamais activés automatiquement.
 
 ## Sécurité mise en place
@@ -57,7 +58,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 1. Les sessions sont en mémoire et disparaissent au redémarrage. C’est sûr mais peu pratique ; une persistance chiffrée et révocable sera nécessaire.
 2. Le stockage JSON deviendra fragile avec plusieurs requêtes et de gros historiques. Migrer vers SQLite avec contraintes d’appartenance et transactions.
 3. Les règles, modèles et quotas parallèles sont appliqués côté serveur, mais les skills et routes VPN n’ont pas encore de moteur d’exécution. Ne pas les présenter comme capacités actives.
-4. La politique CSP autorise encore les scripts et styles inline pour conserver l’interface actuelle. Extraire le code inline afin de supprimer `unsafe-inline`.
+4. La CSP interdit maintenant les scripts et styles inline ; conserver ce contrôle dans la CI.
 5. Aucun test navigateur automatisé complet, test mobile visuel, audit WCAG ou test de charge n’est encore présent.
 
 ### Fonctionnalités incomplètes
@@ -82,9 +83,9 @@ La suite couvre le service statique, la traversée de chemins, la protection API
 
 ## Ordre recommandé
 
-1. SQLite et migrations.
+1. SQLite et migrations mesurées face au stockage JSON transactionnel actuel.
 2. Coffre natif du système pour la clé de chiffrement locale.
 3. Sessions distantes et tunnel HTTPS.
-4. Index de recherche plein texte, pièces jointes et vues de planification avancées.
+4. Index de recherche plein texte incrémental et vues de planification avancées.
 5. Runtime sandboxé pour les skills.
 6. Packaging desktop, tests multiplateformes et première bêta.

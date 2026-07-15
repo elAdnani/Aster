@@ -4,3 +4,4 @@
 .attachment-chip button{min-width:28px;min-height:28px;border-radius:7px;color:var(--muted)}
 .attach{min-height:44px;padding:7px 10px;border:1px solid var(--line);border-radius:9px}
 .message-attachments{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px}
+#prompt{field-sizing:content;max-height:180px}

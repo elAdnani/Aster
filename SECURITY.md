@@ -16,6 +16,8 @@ Full backups are available only to a loopback administrator. Their contents are 
 
 Profiles can be protected by an optional 4-to-8 digit PIN configured by the local administrator. PINs use the same memory-hard salted scrypt protection as account passwords. Profile selection starts locked after every account login or server restart, failed attempts are limited, and API responses expose only `pinRequired`, never PIN salts or hashes.
 
+The application shell loads JavaScript and CSS only from same-origin external files. Its enforced Content Security Policy does not allow inline scripts or styles, reducing the impact of an injected HTML fragment. Dynamic user content is inserted through escaped text templates and attachment contents are never rendered as HTML.
+
 Model allowlists and profile rules are persisted in the protected local authentication store and enforced by the server. A model omitted from a non-empty allowlist is rejected before any Ollama request. Profile rules are prepended as a system instruction by the trusted service instead of being accepted from browser-supplied system messages. Skill allowlists are persisted but do not grant capabilities until a separately sandboxed skill runtime exists.
 
 Model installation is a separate loopback-only administrator action. The server accepts only names from its reviewed catalogue, forwards Ollama’s pull stream without storing it, prevents duplicate pulls for the same model and aborts upstream work when the client disconnects. Model weights remain managed by Ollama and are never included in Aster backups.
