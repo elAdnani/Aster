@@ -53,6 +53,17 @@ test('serves the application shell', async () => {
   assert.match(html, /bootstrap\.js/);
 });
 
+test('reports a lightweight startup diagnostic without exposing credentials', async () => {
+  const result = await new Promise((resolve, reject) => {
+    const diagnostic = spawn(process.execPath, ['scripts/aster.mjs', 'doctor', '--json'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:'4498', OLLAMA_URL:'http://private-user:private-password@127.0.0.1:4499' } });
+    let stdout = '', stderr = ''; diagnostic.stdout.on('data', chunk => { stdout += chunk; }); diagnostic.stderr.on('data', chunk => { stderr += chunk; }); diagnostic.once('error', reject); diagnostic.once('close', code => resolve({ code,stdout,stderr }));
+  });
+  assert.equal(result.code, 0, result.stderr); const report = JSON.parse(result.stdout);
+  assert.equal(report.node.supported, true); assert.equal(report.aster.available, false); assert.equal(report.ollama.available, false); assert.equal(report.ready, false);
+  assert.equal(report.ollama.endpoint, 'http://127.0.0.1:4499');
+  assert.doesNotMatch(result.stdout, /private-user|private-password|C:\\Users|AppData/i);
+});
+
 test('protects API routes when a token is configured', async () => {
   const denied = await fetch(`http://127.0.0.1:${port}/api/health`);
   assert.equal(denied.status, 401);

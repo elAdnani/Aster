@@ -1,33 +1,51 @@
-# Installing Aster Local
+# Installer Aster Local
 
-## Current developer preview
+## Version alpha actuelle
 
-1. Install Node.js 20 or newer.
-2. Clone or copy the Aster folder.
-3. Run `npm.cmd start` from the project folder on Windows, or `npm start` on macOS/Linux.
-4. Open `http://127.0.0.1:4317`.
-5. Optionally install Ollama.
-6. Optionally download a compatible model such as `ollama pull gemma4:12b`.
-7. Refresh Aster and choose the model in the header.
+Prérequis obligatoire : Node.js 20 ou plus récent. Ollama et un modèle sont nécessaires uniquement pour converser ; les comptes, profils, projets et réglages restent accessibles sans modèle.
 
-The interface, profiles and stored conversations can be prepared without downloading a model. Aster itself must not bundle or duplicate model weights.
+1. Cloner ou copier le dossier Aster.
+2. Ouvrir un terminal dans ce dossier.
+3. Lancer le diagnostic :
 
-## Planned packaged installation
+   ```powershell
+   npm.cmd run doctor
+   ```
 
-The desktop installer will perform these explicit steps:
+4. Démarrer Aster sous Windows :
 
-1. Choose installation language and location.
-2. Explain local storage and estimate required disk space.
-3. Sign in to or create the required Aster account.
-4. Create the first administrator profile and set an optional device-session PIN and recovery method.
-5. Choose models. “No model yet” remains valid.
-6. Choose optional network routing. Direct connection remains the default.
-7. Install the local service and desktop shortcut.
-8. Offer PWA/mobile pairing only after authentication is enabled.
-9. Run a privacy and connection self-test.
+   ```powershell
+   npm.cmd start
+   ```
 
-No VPN, model or remote-access component may be selected silently.
+   Sous macOS ou Linux, utiliser `npm start`.
 
-## Mobile and web pairing
+5. Ouvrir <http://127.0.0.1:4317>.
+6. Créer le premier compte administrateur et terminer la configuration obligatoire.
+7. Facultativement, lancer Ollama puis installer explicitement un modèle compatible.
 
-Pairing will use a short-lived QR or one-time code. It must identify the target profile, expire quickly and never expose administrator data. The mobile client receives only the selected profile's encrypted session. See `RULES.md` for mandatory boundaries.
+Aucun `npm install` n’est nécessaire. Le diagnostic ne télécharge rien, ne lit aucun fichier personnel et n’affiche jamais les identifiants éventuellement présents dans une URL Ollama.
+
+## Pourquoi Docker n’est pas imposé
+
+Un conteneur n’allège pas Gemma : les poids du modèle occupent le même espace disque et Ollama doit toujours accéder au GPU. Il ajouterait une image Node, des volumes et une couche réseau alors qu’Aster fonctionne déjà avec les modules intégrés à Node.
+
+La version alpha privilégie donc le processus natif lié à `127.0.0.1`. Un conteneur pourra être proposé plus tard pour un serveur domestique administré, avec volumes chiffrés, utilisateur non privilégié, limites de ressources et configuration GPU documentée. Il ne deviendra pas le parcours par défaut sans bénéfice mesuré.
+
+## Installation empaquetée prévue
+
+Le futur installateur desktop devra :
+
+1. expliquer l’espace utilisé avant toute installation ;
+2. créer le compte administrateur et ses profils ;
+3. laisser « aucun modèle pour le moment » comme choix valide ;
+4. proposer les modèles avec leur taille, sans téléchargement silencieux ;
+5. conserver la connexion directe locale comme réglage réseau par défaut ;
+6. créer le service et le raccourci uniquement après confirmation ;
+7. exécuter un autotest de confidentialité et de connexion.
+
+Aucun VPN, modèle, accès distant ou composant Tor ne doit être sélectionné automatiquement.
+
+## Mobile et web distant
+
+L’appairage futur utilisera un code court ou QR à durée limitée, lié à un compte et un profil précis. Il ne devra jamais exposer les réglages administrateur ou l’historique d’un autre profil. Voir `RULES.md` pour les frontières obligatoires.
