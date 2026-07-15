@@ -16,6 +16,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Sauvegarde portable chiffrée par phrase secrète et restauration locale avec validation intégrale et révocation de toutes les sessions.
 - Projets persistants chiffrés par profil, déplacement des conversations et recherche serveur isolée.
 - Planification chiffrée par profil avec échéances, tâches terminées et rattachement aux projets.
+- Catalogue Gemma 4 vérifié, détection des variantes installées et installation Ollama explicite avec progression.
 - CI Node 20/22/24, CodeQL et processus de publication.
 
 ### Sécurité
