@@ -1,6 +1,6 @@
 {
   "name": "aster-local",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha.2",
   "private": true,
   "type": "module",
   "description": "A private, local-first AI workspace for Gemma and Ollama.",
