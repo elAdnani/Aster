@@ -6,3 +6,8 @@
 .projects-panel nav button.active{background:var(--white)}
 .project-row{display:grid;grid-template-columns:minmax(0,1fr) 30px}.project-row>[data-project-actions]{padding-inline:4px;text-align:center}
 .thread-empty{padding:10px 12px;color:var(--muted);font-size:11px}
+.planning-panel{margin:8px 0 2px;padding:10px;border:1px solid var(--line);border-radius:11px;background:var(--white)}
+.planning-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:9px;font-size:11px}.planning-head small{color:#5f6068}
+.planning-panel form{display:grid;gap:6px}.planning-panel input{min-width:0;min-height:40px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:11px}.planning-panel form>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}.planning-panel form button{min-height:40px;padding:6px 9px;border-radius:8px;background:var(--ink);color:var(--white);font-size:11px}.planning-panel form button:disabled{opacity:.45}
+.task-list{display:grid;gap:2px;max-height:180px;margin-top:9px;overflow:auto}.task-row{display:grid;grid-template-columns:28px minmax(0,1fr) 30px;align-items:center;min-height:38px;border-radius:8px}.task-row:hover{background:var(--bg)}.task-row input{width:16px;height:16px;margin:auto}.task-row>span{display:grid;gap:1px;font-size:11px;line-height:1.3}.task-row small{color:#5f6068;font-size:9px}.task-row.done>span{text-decoration:line-through;color:#73747d}.task-row>button{min-height:34px;color:#8b3f41}.planning-empty{margin:0;padding:9px 3px;color:#5f6068;font-size:11px;line-height:1.45}
+@media(max-width:760px){.planning-panel input,.planning-panel form button{min-height:44px}.task-row{min-height:44px}}

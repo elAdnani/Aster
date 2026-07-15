@@ -1,6 +1,6 @@
 # Sauvegarder et restaurer Aster
 
-La sauvegarde administrateur contient les comptes, profils, politiques, projets et conversations accessibles. Elle est chiffrée avant de quitter le service local.
+La sauvegarde administrateur contient les comptes, profils, politiques, projets, tâches et conversations accessibles. Elle est chiffrée avant de quitter le service local.
 
 ## Créer une sauvegarde
 

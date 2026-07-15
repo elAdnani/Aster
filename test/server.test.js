@@ -254,6 +254,18 @@ test('logs in locally and isolates conversations by profile', async () => {
   const remoteProjects = await fetch(`http://127.0.0.1:${port}/api/projects`, { headers:auth });
   assert.deepEqual((await remoteProjects.json()).projects, []);
   assert.doesNotMatch(await readFile(join(dataDir, 'projects.json'), 'utf8'), /Projet secret/);
+  const taskCreated = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ title:'Préparer la démonstration', dueDate:'2026-08-01', projectId:project.id })
+  });
+  assert.equal(taskCreated.status, 201);
+  const task = (await taskCreated.json()).task;
+  const taskDone = await fetch(`http://127.0.0.1:${port}/api/tasks/${task.id}`, {
+    method:'PATCH', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ done:true })
+  });
+  assert.equal((await taskDone.json()).task.done, true);
+  const remoteTasks = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers:auth });
+  assert.deepEqual((await remoteTasks.json()).tasks, []);
+  assert.doesNotMatch(await readFile(join(dataDir, 'tasks.json'), 'utf8'), /Préparer la démonstration/);
 
   const ownList = await fetch(`http://127.0.0.1:${port}/api/conversations`, { headers:{ cookie } });
   assert.equal((await ownList.json()).conversations.length, 1);
@@ -330,6 +342,7 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal(restored.status, 200, JSON.stringify(restoredBody));
   assert.equal(restoredBody.conversations, 1);
   assert.equal(restoredBody.projects, 1);
+  assert.equal(restoredBody.tasks, 1);
   const revokedAfterRestore = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
   assert.equal(revokedAfterRestore.status, 401);
   const loginAfterRestore = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
@@ -349,4 +362,9 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal(deletedProject.status, 200);
   const conversationWithoutProject = await fetch(`http://127.0.0.1:${port}/api/conversations/${localConversation.id}`, { headers:{ cookie:restoredCookie } });
   assert.equal((await conversationWithoutProject.json()).projectId, null);
+  const restoredTasks = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers:{ cookie:restoredCookie } });
+  const restoredTask = (await restoredTasks.json()).tasks[0];
+  assert.equal(restoredTask.projectId, null);
+  const deletedTask = await fetch(`http://127.0.0.1:${port}/api/tasks/${restoredTask.id}`, { method:'DELETE', headers:{ cookie:restoredCookie } });
+  assert.equal(deletedTask.status, 200);
 });

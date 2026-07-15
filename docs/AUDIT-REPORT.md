@@ -26,7 +26,8 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - File d’inférence FIFO par profil, avec parallélisme administrateur réellement appliqué, annulation et plafond de 25 attentes.
 - Création de comptes non administrateurs et ajout de profils par l’administrateur.
 - Projets chiffrés par profil, déplacement des conversations et recherche serveur dans les titres et messages.
-- Amorces Planification, Plugins et Bibliothèque encore non persistantes.
+- Amorces Plugins et Bibliothèque encore non persistantes.
+- Planification chiffrée par profil avec tâches, échéances et rattachement aux projets.
 - VPN, Proton VPN et Tor présentés uniquement comme options futures, jamais activés automatiquement.
 
 ## Sécurité mise en place
@@ -61,7 +62,6 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 ### Fonctionnalités incomplètes
 
-- Planification persistante.
 - Installation, permissions et sandbox des plugins/skills.
 - Détection automatique RAM/VRAM pour recommander la limite parallèle ; la limite choisie est déjà appliquée.
 - Import/export réellement filtré et chiffré par profil.
@@ -85,6 +85,6 @@ La suite couvre le service statique, la traversée de chemins, la protection API
 1. SQLite et migrations.
 2. Coffre natif du système pour la clé de chiffrement locale.
 3. Sessions distantes et tunnel HTTPS.
-4. Index de recherche plein texte, pièces jointes et planification.
+4. Index de recherche plein texte, pièces jointes et vues de planification avancées.
 5. Runtime sandboxé pour les skills.
 6. Packaging desktop, tests multiplateformes et première bêta.

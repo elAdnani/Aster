@@ -18,6 +18,7 @@ const conversationFile = process.env.ASTER_DATA_DIR
 const authFile = join(dataDir, 'auth.json');
 const storageKeyFile = join(dataDir, 'storage.key');
 const projectFile = join(dataDir, 'projects.json');
+const taskFile = join(dataDir, 'tasks.json');
 const sessions = new Map();
 const loginAttempts = new Map();
 const pinAttempts = new Map();
@@ -31,6 +32,7 @@ const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=ut
 let mutation = Promise.resolve();
 let authMutation = Promise.resolve();
 let projectMutation = Promise.resolve();
+let taskMutation = Promise.resolve();
 let storageKeyPromise;
 
 function json(res, status, body) {
@@ -209,6 +211,10 @@ async function projectKey(profileId) {
   return Buffer.from(hkdfSync('sha256', await storageMasterKey(), Buffer.from(profileId), Buffer.from('aster-project-v1'), 32));
 }
 
+async function taskKey(profileId) {
+  return Buffer.from(hkdfSync('sha256', await storageMasterKey(), Buffer.from(profileId), Buffer.from('aster-task-v1'), 32));
+}
+
 async function encryptConversation(conversation) {
   const iv = randomBytes(12); const key = await conversationKey(conversation.profileId);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -311,6 +317,47 @@ function projectName(input) {
   return name;
 }
 
+async function loadTasks() {
+  try {
+    const records = JSON.parse(await readFile(taskFile, 'utf8')); if (!Array.isArray(records)) throw new Error('invalid store');
+    return await Promise.all(records.map(async record => {
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', await taskKey(record.profileId), Buffer.from(record.encrypted.iv, 'base64'));
+        decipher.setAAD(Buffer.from(`${record.id}:${record.profileId}`)); decipher.setAuthTag(Buffer.from(record.encrypted.tag, 'base64'));
+        const payload = JSON.parse(Buffer.concat([decipher.update(Buffer.from(record.encrypted.data, 'base64')), decipher.final()]).toString('utf8'));
+        return { id:record.id, profileId:record.profileId, ...payload, createdAt:record.createdAt, updatedAt:record.updatedAt };
+      } catch { throw Object.assign(new Error('Une tâche chiffrée est illisible ou a été modifiée.'), { status:500 }); }
+    }));
+  } catch (error) {
+    if (error.code === 'ENOENT') return []; if (error.status) throw error;
+    throw Object.assign(new Error('Le stockage de planification est illisible.'), { status:500 });
+  }
+}
+
+async function saveTasks(tasks) {
+  await mkdir(dirname(taskFile), { recursive:true }); const temporary = `${taskFile}.${process.pid}.${randomUUID()}.tmp`;
+  const records = await Promise.all(tasks.map(async task => {
+    const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', await taskKey(task.profileId), iv); cipher.setAAD(Buffer.from(`${task.id}:${task.profileId}`));
+    const payload = Buffer.from(JSON.stringify({ title:task.title, done:!!task.done, dueDate:task.dueDate || null, projectId:task.projectId || null }), 'utf8'); const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
+    return { id:task.id, profileId:task.profileId, createdAt:task.createdAt, updatedAt:task.updatedAt, encrypted:{ version:1, iv:iv.toString('base64'), tag:cipher.getAuthTag().toString('base64'), data:encrypted.toString('base64') } };
+  }));
+  await writeFile(temporary, `${JSON.stringify(records, null, 2)}\n`, { encoding:'utf8', flag:'wx', mode:0o600 }); await rename(temporary, taskFile);
+}
+
+function mutateTasks(operation) {
+  const next = taskMutation.then(async () => { const tasks = await loadTasks(); const result = await operation(tasks); await saveTasks(tasks); return result; });
+  taskMutation = next.catch(() => {}); return next;
+}
+
+function validateTask(input, partial = false) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw Object.assign(new Error('Tâche invalide.'), { status:400 }); const output = {};
+  if (!partial || 'title' in input) { const title = String(input.title || '').trim(); if (!title || title.length > 160) throw Object.assign(new Error('Le titre doit contenir entre 1 et 160 caractères.'), { status:400 }); output.title = title; }
+  if ('done' in input) { if (typeof input.done !== 'boolean') throw Object.assign(new Error('État de tâche invalide.'), { status:400 }); output.done = input.done; }
+  if ('dueDate' in input) { const value = input.dueDate === null ? null : String(input.dueDate); let valid = value === null; if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) { const date = new Date(`${value}T00:00:00Z`); valid = !Number.isNaN(date.getTime()) && date.toISOString().slice(0,10) === value; } if (!valid) throw Object.assign(new Error('Date invalide.'), { status:400 }); output.dueDate = value; }
+  if ('projectId' in input) { if (input.projectId !== null && !/^[0-9a-f-]{36}$/i.test(String(input.projectId))) throw Object.assign(new Error('Projet invalide.'), { status:400 }); output.projectId = input.projectId; }
+  if (partial && !Object.keys(output).length) throw Object.assign(new Error('Aucun champ modifiable fourni.'), { status:400 }); return output;
+}
+
 function validateConversation(input, partial = false) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw Object.assign(new Error('Conversation invalide.'), { status:400 });
   const output = {};
@@ -360,9 +407,13 @@ function validateBackupData(data) {
   if (administrators !== 1) throw new Error('La sauvegarde doit contenir un administrateur unique.');
   if (data.auth.installationMode === 'solo' && data.auth.users.length !== 1) throw new Error('Mode d’installation incohérent.');
   const conversationProfiles = new Set([...profileIds, 'remote']);
-  const projectIds = new Set(); const projects = (Array.isArray(data.projects) ? data.projects : []).map(project => {
+  const projectIds = new Set(); const projectProfiles = new Map(); const projects = (Array.isArray(data.projects) ? data.projects : []).map(project => {
     if (!project || !/^[0-9a-f-]{36}$/i.test(project.id) || projectIds.has(project.id) || !conversationProfiles.has(project.profileId) || typeof project.name !== 'string' || !project.name.trim() || project.name.length > 80 || typeof project.createdAt !== 'string' || typeof project.updatedAt !== 'string') throw new Error('Projet sauvegardé invalide.');
-    projectIds.add(project.id); return { id:project.id, profileId:project.profileId, name:project.name.trim(), createdAt:project.createdAt, updatedAt:project.updatedAt };
+    projectIds.add(project.id); projectProfiles.set(project.id, project.profileId); return { id:project.id, profileId:project.profileId, name:project.name.trim(), createdAt:project.createdAt, updatedAt:project.updatedAt };
+  });
+  const taskIds = new Set(); const tasks = (Array.isArray(data.tasks) ? data.tasks : []).map(task => {
+    if (!task || !/^[0-9a-f-]{36}$/i.test(task.id) || taskIds.has(task.id) || !conversationProfiles.has(task.profileId) || (task.projectId && projectProfiles.get(task.projectId) !== task.profileId) || typeof task.createdAt !== 'string' || typeof task.updatedAt !== 'string') throw new Error('Tâche sauvegardée invalide.');
+    taskIds.add(task.id); return { id:task.id, profileId:task.profileId, ...validateTask(task), createdAt:task.createdAt, updatedAt:task.updatedAt };
   });
   if (data.conversations.length > conversationProfiles.size * MAX_CONVERSATIONS) throw new Error('Trop de conversations dans la sauvegarde.');
   const counts = new Map(); const ids = new Set(); const conversations = data.conversations.map(item => {
@@ -370,10 +421,10 @@ function validateBackupData(data) {
     ids.add(item.id); counts.set(item.profileId, (counts.get(item.profileId) || 0) + 1);
     if (counts.get(item.profileId) > MAX_CONVERSATIONS) throw new Error('Limite de conversations dépassée dans la sauvegarde.');
     if (typeof item.createdAt !== 'string' || item.createdAt.length > 40 || typeof item.updatedAt !== 'string' || item.updatedAt.length > 40) throw new Error('Horodatage de conversation invalide.');
-    if (item.projectId && !projectIds.has(item.projectId)) throw new Error('Projet de conversation introuvable dans la sauvegarde.');
+    if (item.projectId && projectProfiles.get(item.projectId) !== item.profileId) throw new Error('Projet de conversation introuvable dans la sauvegarde.');
     return { id:item.id, profileId:item.profileId, ...validateConversation(item), createdAt:item.createdAt, updatedAt:item.updatedAt };
   });
-  return { auth:data.auth, projects, conversations };
+  return { auth:data.auth, projects, tasks, conversations };
 }
 
 async function createEncryptedBackup(passphrase) {
@@ -382,7 +433,8 @@ async function createEncryptedBackup(passphrase) {
   const auth = await loadAuth(); const allowedProfiles = new Set(['remote', ...auth.users.flatMap(user => user.profiles.map(profile => profile.id))]);
   const conversations = (await loadConversations()).filter(item => allowedProfiles.has(item.profileId));
   const projects = (await loadProjects()).filter(item => allowedProfiles.has(item.profileId));
-  const payload = Buffer.from(JSON.stringify({ version:1, auth, projects, conversations }), 'utf8');
+  const tasks = (await loadTasks()).filter(item => allowedProfiles.has(item.profileId));
+  const payload = Buffer.from(JSON.stringify({ version:1, auth, projects, tasks, conversations }), 'utf8');
   const cipher = createCipheriv('aes-256-gcm', key, iv); cipher.setAAD(Buffer.from(`aster-backup-v1:${createdAt}`));
   const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
   return { format:'aster-backup', version:1, createdAt, kdf:{ name:'scrypt', N:SCRYPT_OPTIONS.N, r:SCRYPT_OPTIONS.r, p:SCRYPT_OPTIONS.p, salt:salt.toString('base64') }, cipher:{ name:'aes-256-gcm', iv:iv.toString('base64'), tag:cipher.getAuthTag().toString('base64') }, data:encrypted.toString('base64') };
@@ -511,15 +563,15 @@ async function api(req, res, url) {
     if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
     const input = await body(req, 50_000_000);
     if (input.confirmation !== 'RESTAURER') return json(res, 400, { error:'Confirmation de restauration invalide.' });
-    const restored = await openEncryptedBackup(input.backup, input.passphrase); const currentConversations = await loadConversations(); const currentProjects = await loadProjects();
+    const restored = await openEncryptedBackup(input.backup, input.passphrase); const currentConversations = await loadConversations(); const currentProjects = await loadProjects(); const currentTasks = await loadTasks();
     try {
-      await saveAuth(restored.auth); await saveProjects(restored.projects); await saveConversations(restored.conversations);
+      await saveAuth(restored.auth); await saveProjects(restored.projects); await saveTasks(restored.tasks); await saveConversations(restored.conversations);
     } catch (error) {
-      await saveAuth(currentAuth).catch(() => {}); await saveProjects(currentProjects).catch(() => {}); await saveConversations(currentConversations).catch(() => {});
+      await saveAuth(currentAuth).catch(() => {}); await saveProjects(currentProjects).catch(() => {}); await saveTasks(currentTasks).catch(() => {}); await saveConversations(currentConversations).catch(() => {});
       throw Object.assign(new Error('Restauration interrompue ; les données précédentes ont été conservées.'), { status:500, cause:error });
     }
     sessions.clear(); loginAttempts.clear(); pinAttempts.clear(); res.setHeader('set-cookie', sessionCookie('', 0));
-    return json(res, 200, { ok:true, users:restored.auth.users.length, projects:restored.projects.length, conversations:restored.conversations.length });
+    return json(res, 200, { ok:true, users:restored.auth.users.length, projects:restored.projects.length, tasks:restored.tasks.length, conversations:restored.conversations.length });
   }
   if (url.pathname === '/api/admin/config' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
@@ -597,6 +649,7 @@ async function api(req, res, url) {
     revokeUserSessions(deleted.id);
     await mutateConversations((conversations) => { const kept = conversations.filter(item => !deleted.profileIds.includes(item.profileId)); conversations.splice(0, conversations.length, ...kept); });
     await mutateProjects((projects) => { const kept = projects.filter(item => !deleted.profileIds.includes(item.profileId)); projects.splice(0, projects.length, ...kept); });
+    await mutateTasks((tasks) => { const kept = tasks.filter(item => !deleted.profileIds.includes(item.profileId)); tasks.splice(0, tasks.length, ...kept); });
     return json(res, 200, { ok:true });
   }
   const adminDeleteProfileMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})$/i);
@@ -616,6 +669,7 @@ async function api(req, res, url) {
     revokeUserSessions(deleted.userId, deleted.profileId);
     await mutateConversations((conversations) => { const kept = conversations.filter(item => item.profileId !== deleted.profileId); conversations.splice(0, conversations.length, ...kept); });
     await mutateProjects((projects) => { const kept = projects.filter(item => item.profileId !== deleted.profileId); projects.splice(0, projects.length, ...kept); });
+    await mutateTasks((tasks) => { const kept = tasks.filter(item => item.profileId !== deleted.profileId); tasks.splice(0, tasks.length, ...kept); });
     return json(res, 200, { ok:true });
   }
   const adminPinMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})\/pin$/i);
@@ -658,6 +712,32 @@ async function api(req, res, url) {
     return json(res, 200, { policy:saved });
   }
   if (session.userId !== 'remote' && !session.profileId) return json(res, 403, { error:'Sélectionnez un profil.' });
+  const taskMatch = url.pathname.match(/^\/api\/tasks\/([0-9a-f-]{36})$/i);
+  if (url.pathname === '/api/tasks' && req.method === 'GET') {
+    return json(res, 200, { tasks:(await loadTasks()).filter(item => item.profileId === session.profileId) });
+  }
+  if (url.pathname === '/api/tasks' && req.method === 'POST') {
+    const input = validateTask(await body(req));
+    if (input.projectId && !(await loadProjects()).some(project => project.id === input.projectId && project.profileId === session.profileId)) return json(res, 404, { error:'Projet introuvable.' });
+    const task = await mutateTasks(tasks => {
+      if (tasks.filter(item => item.profileId === session.profileId).length >= 500) throw Object.assign(new Error('Maximum 500 tâches par profil.'), { status:409 });
+      const now = new Date().toISOString(); const created = { id:randomUUID(), profileId:session.profileId, ...input, done:!!input.done, dueDate:input.dueDate || null, projectId:input.projectId || null, createdAt:now, updatedAt:now }; tasks.unshift(created); return created;
+    });
+    return json(res, 201, { task });
+  }
+  if (taskMatch && req.method === 'PATCH') {
+    const input = validateTask(await body(req), true);
+    if (input.projectId && !(await loadProjects()).some(project => project.id === input.projectId && project.profileId === session.profileId)) return json(res, 404, { error:'Projet introuvable.' });
+    const task = await mutateTasks(tasks => {
+      const item = tasks.find(task => task.id === taskMatch[1] && task.profileId === session.profileId); if (!item) throw Object.assign(new Error('Tâche introuvable.'), { status:404 });
+      Object.assign(item, input, { updatedAt:new Date().toISOString() }); return item;
+    });
+    return json(res, 200, { task });
+  }
+  if (taskMatch && req.method === 'DELETE') {
+    await mutateTasks(tasks => { const index = tasks.findIndex(task => task.id === taskMatch[1] && task.profileId === session.profileId); if (index < 0) throw Object.assign(new Error('Tâche introuvable.'), { status:404 }); tasks.splice(index, 1); });
+    return json(res, 200, { ok:true });
+  }
   const projectMatch = url.pathname.match(/^\/api\/projects\/([0-9a-f-]{36})$/i);
   if (url.pathname === '/api/projects' && req.method === 'GET') {
     const projects = (await loadProjects()).filter(item => item.profileId === session.profileId);
@@ -686,6 +766,7 @@ async function api(req, res, url) {
       if (index < 0) throw Object.assign(new Error('Projet introuvable.'), { status:404 }); projects.splice(index, 1);
     });
     await mutateConversations(conversations => { for (const item of conversations) if (item.profileId === session.profileId && item.projectId === projectMatch[1]) item.projectId = null; });
+    await mutateTasks(tasks => { for (const item of tasks) if (item.profileId === session.profileId && item.projectId === projectMatch[1]) item.projectId = null; });
     return json(res, 200, { ok:true });
   }
   if (url.pathname === '/api/search' && req.method === 'GET') {
