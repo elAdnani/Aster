@@ -6,7 +6,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const port = 4399;
+const port = 45_000 + Math.floor(Math.random() * 5_000);
+const ollamaPort = port + 1;
 let child;
 let dataDir;
 let ollamaServer;
@@ -28,10 +29,10 @@ test.before(async () => {
     }
     res.writeHead(404); res.end();
   });
-  await new Promise(resolve => ollamaServer.listen(4400, '127.0.0.1', resolve));
+  await new Promise(resolve => ollamaServer.listen(ollamaPort, '127.0.0.1', resolve));
   child = spawn(process.execPath, ['server/index.js'], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, PORT:String(port), HOST:'127.0.0.1', ASTER_REMOTE_TOKEN:'test-token', OLLAMA_URL:'http://127.0.0.1:4400', ASTER_DATA_DIR:dataDir },
+    env: { ...process.env, PORT:String(port), HOST:'127.0.0.1', ASTER_REMOTE_TOKEN:'test-token', OLLAMA_URL:`http://127.0.0.1:${ollamaPort}`, ASTER_DATA_DIR:dataDir },
     stdio:'ignore'
   });
   for (let i=0;i<30;i++) {
@@ -55,12 +56,12 @@ test('serves the application shell', async () => {
 
 test('reports a lightweight startup diagnostic without exposing credentials', async () => {
   const result = await new Promise((resolve, reject) => {
-    const diagnostic = spawn(process.execPath, ['scripts/aster.mjs', 'doctor', '--json'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:'4498', OLLAMA_URL:'http://private-user:private-password@127.0.0.1:4499' } });
+    const diagnostic = spawn(process.execPath, ['scripts/aster.mjs', 'doctor', '--json'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(port + 6), OLLAMA_URL:`http://private-user:private-password@127.0.0.1:${port + 7}` } });
     let stdout = '', stderr = ''; diagnostic.stdout.on('data', chunk => { stdout += chunk; }); diagnostic.stderr.on('data', chunk => { stderr += chunk; }); diagnostic.once('error', reject); diagnostic.once('close', code => resolve({ code,stdout,stderr }));
   });
   assert.equal(result.code, 0, result.stderr); const report = JSON.parse(result.stdout);
   assert.equal(report.node.supported, true); assert.equal(report.aster.available, false); assert.equal(report.ollama.available, false); assert.equal(report.ready, false);
-  assert.equal(report.ollama.endpoint, 'http://127.0.0.1:4499');
+  assert.equal(report.ollama.endpoint, `http://127.0.0.1:${port + 7}`);
   assert.doesNotMatch(result.stdout, /private-user|private-password|C:\\Users|AppData/i);
 });
 
@@ -78,7 +79,7 @@ test('does not expose paths outside the web root', async () => {
 });
 
 test('recovers an interrupted multi-store transaction before serving data', async () => {
-  const recoveryDir = await mkdtemp(join(tmpdir(), 'aster-recovery-')); const recoveryPort = 4402;
+  const recoveryDir = await mkdtemp(join(tmpdir(), 'aster-recovery-')); const recoveryPort = port + 2;
   const previousAuth = JSON.stringify({ version:1, installationMode:'solo', users:[{ id:'00000000-0000-4000-8000-000000000001', username:'recovered', role:'admin', profiles:[] }] });
   await writeFile(join(recoveryDir, 'auth.json'), JSON.stringify({ version:1, installationMode:null, users:[] }));
   const previousAuthBytes = Buffer.from(previousAuth); const previousAuthHash = (await import('node:crypto')).createHash('sha256').update(previousAuthBytes).digest('hex');
@@ -94,7 +95,7 @@ test('recovers an interrupted multi-store transaction before serving data', asyn
 });
 
 test('fails closed when an interrupted transaction journal is altered', async () => {
-  const recoveryDir = await mkdtemp(join(tmpdir(), 'aster-recovery-bad-')); const recoveryPort = 4403;
+  const recoveryDir = await mkdtemp(join(tmpdir(), 'aster-recovery-bad-')); const recoveryPort = port + 3;
   const currentAuth = JSON.stringify({ version:1, installationMode:null, users:[] }); await writeFile(join(recoveryDir, 'auth.json'), currentAuth);
   await writeFile(join(recoveryDir, 'transaction.json'), JSON.stringify({ version:1, stores:{ auth:{ data:Buffer.from(currentAuth).toString('base64'), sha256:'0'.repeat(64) }, projects:null, tasks:null, conversations:null } }));
   const recoveryChild = spawn(process.execPath, ['server/index.js'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(recoveryPort), HOST:'127.0.0.1', ASTER_DATA_DIR:recoveryDir }, stdio:'ignore' });
@@ -206,7 +207,7 @@ test('sets up an admin and manages a secure cookie session', async () => {
 });
 
 test('rotates and limits account sessions', async () => {
-  const sessionDir = await mkdtemp(join(tmpdir(), 'aster-sessions-')); const sessionPort = 4404;
+  const sessionDir = await mkdtemp(join(tmpdir(), 'aster-sessions-')); const sessionPort = port + 4;
   const sessionChild = spawn(process.execPath, ['server/index.js'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(sessionPort), HOST:'127.0.0.1', ASTER_DATA_DIR:sessionDir, ASTER_SESSION_IDLE_MS:'60000', ASTER_MAX_USER_SESSIONS:'3' }, stdio:'ignore' });
   try {
     for (let i=0;i<30;i++) { try { await fetch(`http://127.0.0.1:${sessionPort}/`); break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); } }
@@ -225,7 +226,7 @@ test('rotates and limits account sessions', async () => {
 });
 
 test('expires an inactive session', async () => {
-  const idleDir = await mkdtemp(join(tmpdir(), 'aster-idle-')); const idlePort = 4405;
+  const idleDir = await mkdtemp(join(tmpdir(), 'aster-idle-')); const idlePort = port + 5;
   const idleChild = spawn(process.execPath, ['server/index.js'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(idlePort), HOST:'127.0.0.1', ASTER_DATA_DIR:idleDir, ASTER_SESSION_IDLE_MS:'150' }, stdio:'ignore' });
   try {
     for (let i=0;i<30;i++) { try { await fetch(`http://127.0.0.1:${idlePort}/`); break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); } }
