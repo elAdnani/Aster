@@ -20,6 +20,7 @@ const storageKeyFile = join(dataDir, 'storage.key');
 const sessions = new Map();
 const loginAttempts = new Map();
 const pinAttempts = new Map();
+const inferenceQueues = new Map();
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const SCRYPT_OPTIONS = { N:131072, r:8, p:1, maxmem:256 * 1024 * 1024 };
 const MAX_CONVERSATIONS = 500;
@@ -60,6 +61,36 @@ function checkPinRate(session, profileId) {
   if (recent.length >= 5) throw Object.assign(new Error('Trop de tentatives de PIN. Réessayez dans quelques minutes.'), { status:429 });
   recent.push(now); pinAttempts.set(key, recent);
   return key;
+}
+
+function inferenceState(profileId) {
+  if (!inferenceQueues.has(profileId)) inferenceQueues.set(profileId, { active:0, queue:[] });
+  return inferenceQueues.get(profileId);
+}
+
+function acquireInference(profileId, limit, signal) {
+  const state = inferenceState(profileId);
+  if (state.active < limit) { state.active += 1; return Promise.resolve(() => releaseInference(profileId, limit)); }
+  if (state.queue.length >= 25) throw Object.assign(new Error('File d’attente pleine pour ce profil.'), { status:429 });
+  return new Promise((resolve, reject) => {
+    const waiter = { resolve, reject, signal, aborted:false };
+    const abort = () => { waiter.aborted = true; state.queue = state.queue.filter(item => item !== waiter); reject(Object.assign(new Error('Requête annulée.'), { status:499 })); };
+    waiter.abort = abort;
+    if (signal?.aborted) return abort();
+    signal?.addEventListener('abort', abort, { once:true });
+    state.queue.push(waiter);
+  });
+}
+
+function releaseInference(profileId, limit) {
+  const state = inferenceState(profileId); state.active = Math.max(0, state.active - 1);
+  while (state.queue.length && state.active < limit) {
+    const waiter = state.queue.shift();
+    if (waiter.aborted) continue;
+    waiter.signal?.removeEventListener('abort', waiter.abort); state.active += 1;
+    let released = false; waiter.resolve(() => { if (!released) { released = true; releaseInference(profileId, limit); } });
+  }
+  if (!state.active && !state.queue.length) inferenceQueues.delete(profileId);
 }
 
 function cookie(req, name) {
@@ -481,6 +512,10 @@ async function api(req, res, url) {
       return json(res, 200, { models:(data.models || []).map(m => ({ name:m.name, size:m.size })) });
     } catch { return json(res, 503, { error:'Ollama est hors ligne.', models:[] }); }
   }
+  if (url.pathname === '/api/inference/status' && req.method === 'GET') {
+    const state = inferenceQueues.get(session.profileId) || { active:0, queue:[] };
+    return json(res, 200, { active:state.active, queued:state.queue.length });
+  }
   if (url.pathname === '/api/chat' && req.method === 'POST') {
     const input = await body(req);
     const model = String(input.model || 'gemma4:12b').slice(0, 120);
@@ -492,15 +527,20 @@ async function api(req, res, url) {
     }
     const messages = Array.isArray(input.messages) ? input.messages.slice(-80).filter(m => m && ['user','assistant','tool'].includes(m.role)).map(m => ({ role:m.role, content:String(m.content || '').slice(0, 100_000) })) : [];
     if (policy?.rules) messages.unshift({ role:'system', content:policy.rules });
-    const upstream = await fetch(`${ollama}/api/chat`, {
-      method:'POST', headers:{ 'content-type':'application/json' },
-      body:JSON.stringify({ model, messages, stream:true }), signal:req.signal
-    });
-    if (!upstream.ok || !upstream.body) return json(res, upstream.status, { error:await upstream.text() });
-    res.writeHead(200, { ...securityHeaders(), 'content-type':'application/x-ndjson', 'cache-control':'no-store' });
-    const reader = upstream.body.getReader();
-    try { while (true) { const {done,value}=await reader.read(); if(done) break; if(!res.write(value)) await new Promise(r => res.once('drain',r)); } }
-    finally { reader.releaseLock(); res.end(); }
+    const controller = new AbortController(); res.once('close', () => { if (!res.writableEnded) controller.abort(); });
+    const queuedAt = Date.now(); const limit = policy?.parallelRequests || 1;
+    const release = await acquireInference(session.profileId, limit, controller.signal);
+    try {
+      const upstream = await fetch(`${ollama}/api/chat`, {
+        method:'POST', headers:{ 'content-type':'application/json' },
+        body:JSON.stringify({ model, messages, stream:true }), signal:controller.signal
+      });
+      if (!upstream.ok || !upstream.body) return json(res, upstream.status, { error:await upstream.text() });
+      res.writeHead(200, { ...securityHeaders(), 'content-type':'application/x-ndjson', 'cache-control':'no-store', 'x-aster-queue-wait-ms':String(Date.now()-queuedAt) });
+      const reader = upstream.body.getReader();
+      try { while (true) { const {done,value}=await reader.read(); if(done) break; if(!res.write(value)) await new Promise(r => res.once('drain',r)); } }
+      finally { reader.releaseLock(); res.end(); }
+    } finally { release(); }
     return;
   }
   json(res, 404, { error:'Route inconnue.' });

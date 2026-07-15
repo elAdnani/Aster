@@ -23,6 +23,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - Requêtes de conversations systématiquement filtrées par le profil actif.
 - Administration locale : choix Personnel/Foyer/Personnalisé, jusqu’à trois comptes et quatre profils par compte.
 - Politiques par profil appliquées côté serveur : modèles autorisés, règles système, skills déclarés et limite parallèle préparée.
+- File d’inférence FIFO par profil, avec parallélisme administrateur réellement appliqué, annulation et plafond de 25 attentes.
 - Création de comptes non administrateurs et ajout de profils par l’administrateur.
 - Recherche visuelle dans les conversations, amorces Projets, Planification, Plugins et Bibliothèque.
 - VPN, Proton VPN et Tor présentés uniquement comme options futures, jamais activés automatiquement.
@@ -53,7 +54,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 1. Les sessions sont en mémoire et disparaissent au redémarrage. C’est sûr mais peu pratique ; une persistance chiffrée et révocable sera nécessaire.
 2. Le stockage JSON deviendra fragile avec plusieurs requêtes et de gros historiques. Migrer vers SQLite avec contraintes d’appartenance et transactions.
-3. Les règles et modèles sont appliqués côté serveur, mais les skills, quotas parallèles et routes VPN n’ont pas encore de moteur d’exécution. Ne pas les présenter comme capacités actives.
+3. Les règles, modèles et quotas parallèles sont appliqués côté serveur, mais les skills et routes VPN n’ont pas encore de moteur d’exécution. Ne pas les présenter comme capacités actives.
 4. La politique CSP autorise encore les scripts et styles inline pour conserver l’interface actuelle. Extraire le code inline afin de supprimer `unsafe-inline`.
 5. Aucun test navigateur automatisé complet, test mobile visuel, audit WCAG ou test de charge n’est encore présent.
 
@@ -64,7 +65,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - Recherche serveur dans le contenu des messages.
 - Planification persistante.
 - Installation, permissions et sandbox des plugins/skills.
-- File d’attente et requêtes Ollama parallèles selon la RAM/VRAM.
+- Détection automatique RAM/VRAM pour recommander la limite parallèle ; la limite choisie est déjà appliquée.
 - Import/export réellement filtré et chiffré par profil.
 - Applications desktop/mobile natives et routage VPN par application.
 

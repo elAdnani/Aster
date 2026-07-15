@@ -10,6 +10,8 @@ Profiles can be protected by an optional 4-to-8 digit PIN configured by the loca
 
 Model allowlists and profile rules are persisted in the protected local authentication store and enforced by the server. A model omitted from a non-empty allowlist is rejected before any Ollama request. Profile rules are prepended as a system instruction by the trusted service instead of being accepted from browser-supplied system messages. Skill allowlists are persisted but do not grant capabilities until a separately sandboxed skill runtime exists.
 
+Inference concurrency is enforced independently for each active profile. Requests exceeding the administrator’s parallel limit wait in a bounded in-memory FIFO queue; a profile can have at most 25 waiting requests. Disconnected clients are removed, slots are released in `finally` paths, and queue state contains no prompt content.
+
 Aster is local-first, not magically safe. The v0.1 server listens on loopback by default and intentionally offers no shell or filesystem tools. Never bind it to a public interface without authentication and a trusted encrypted network.
 
 Report vulnerabilities privately to the future security contact before publishing details. Until a contact is configured, open a minimal GitHub issue asking maintainers for a private channel without including exploit details.

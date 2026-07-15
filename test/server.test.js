@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,13 +9,26 @@ import { join } from 'node:path';
 const port = 4399;
 let child;
 let dataDir;
+let ollamaServer;
+let activeInference = 0;
+let maxObservedInference = 0;
 const auth = { authorization:'Bearer test-token' };
 
 test.before(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'aster-test-'));
+  ollamaServer = createServer((req, res) => {
+    if (req.url === '/api/tags') { res.writeHead(200, { 'content-type':'application/json' }); return res.end(JSON.stringify({ models:[{ name:'allowed-local-model', size:1 }] })); }
+    if (req.url === '/api/chat') {
+      activeInference += 1; maxObservedInference = Math.max(maxObservedInference, activeInference);
+      setTimeout(() => { res.writeHead(200, { 'content-type':'application/x-ndjson' }); res.end(`${JSON.stringify({ message:{ content:'ok' } })}\n`); activeInference -= 1; }, 120);
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  await new Promise(resolve => ollamaServer.listen(4400, '127.0.0.1', resolve));
   child = spawn(process.execPath, ['server/index.js'], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, PORT:String(port), HOST:'127.0.0.1', ASTER_REMOTE_TOKEN:'test-token', OLLAMA_URL:'http://127.0.0.1:59999', ASTER_DATA_DIR:dataDir },
+    env: { ...process.env, PORT:String(port), HOST:'127.0.0.1', ASTER_REMOTE_TOKEN:'test-token', OLLAMA_URL:'http://127.0.0.1:4400', ASTER_DATA_DIR:dataDir },
     stdio:'ignore'
   });
   for (let i=0;i<30;i++) {
@@ -24,7 +38,7 @@ test.before(async () => {
   throw new Error('Server did not start');
 });
 
-test.after(async () => { child?.kill(); await rm(dataDir, { recursive:true, force:true }); });
+test.after(async () => { child?.kill(); await new Promise(resolve => ollamaServer?.close(resolve)); await rm(dataDir, { recursive:true, force:true }); });
 
 test('serves the application shell', async () => {
   const response = await fetch(`http://127.0.0.1:${port}/`);
@@ -203,6 +217,23 @@ test('logs in locally and isolates conversations by profile', async () => {
     method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ model:'gemma4:12b', messages:[] })
   });
   assert.equal(deniedModel.status, 403);
+  const chatRequest = () => fetch(`http://127.0.0.1:${port}/api/chat`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ model:'allowed-local-model', messages:[{ role:'user', content:'test' }] })
+  }).then(async response => { assert.equal(response.status, 200); await response.text(); return Number(response.headers.get('x-aster-queue-wait-ms')); });
+  maxObservedInference = 0;
+  const waits = await Promise.all([chatRequest(), chatRequest()]);
+  assert.equal(maxObservedInference, 1);
+  assert.ok(Math.max(...waits) >= 80);
+  const parallelPolicy = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, {
+    method:'PUT', headers:{ cookie, 'content-type':'application/json' },
+    body:JSON.stringify({ allowedModels:['allowed-local-model'], allowedSkills:['writing'], rules:'Répondre brièvement.', parallelRequests:2 })
+  });
+  assert.equal(parallelPolicy.status, 200);
+  maxObservedInference = 0;
+  await Promise.all([chatRequest(), chatRequest()]);
+  assert.equal(maxObservedInference, 2);
+  const inferenceStatus = await fetch(`http://127.0.0.1:${port}/api/inference/status`, { headers:{ cookie } });
+  assert.deepEqual(await inferenceStatus.json(), { active:0, queued:0 });
   const created = await fetch(`http://127.0.0.1:${port}/api/conversations`, {
     method:'POST', headers:{ cookie, 'content-type':'application/json' },
     body:JSON.stringify({ title:'Conversation locale', messages:[] })
