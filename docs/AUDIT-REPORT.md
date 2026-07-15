@@ -72,7 +72,7 @@ Le dépôt est publiable comme **prototype expérimental**, mais pas encore pré
 
 ## État des tests
 
-La suite compte actuellement 13 scénarios automatisés. Elle couvre le service statique, le refus des hôtes non autorisés, la traversée de chemins, la protection API, le cycle CRUD des conversations, les entrées invalides, le setup administrateur, les cookies sécurisés, le login, la rotation et l’expiration des sessions, la configuration de l’installation, la création et le cycle de vie des comptes/profils, leur isolation, ainsi que la sauvegarde/restauration chiffrée avec refus des secrets incorrects et fichiers altérés. Elle doit rester verte avant chaque publication.
+La suite compte actuellement 14 scénarios automatisés. Elle couvre le service statique, le refus des hôtes non autorisés, la validation de la configuration réseau au démarrage, la traversée de chemins, la protection API, le cycle CRUD des conversations, les entrées invalides, le setup administrateur, les cookies sécurisés, le login, la rotation et l’expiration des sessions, la configuration de l’installation, la création et le cycle de vie des comptes/profils, leur isolation, ainsi que la sauvegarde/restauration chiffrée avec refus des secrets incorrects et fichiers altérés. Elle doit rester verte avant chaque publication.
 
 ## Conditions de publication GitHub
 
