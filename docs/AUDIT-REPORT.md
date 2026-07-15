@@ -70,7 +70,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 ## État des tests
 
-La suite couvre le service statique, la traversée de chemins, la protection API, le cycle CRUD des conversations, les entrées invalides, le setup administrateur, les cookies sécurisés, le login, la configuration de l’installation, la création de comptes/profils et l’isolation entre profils. Elle doit rester verte avant chaque publication.
+La suite couvre le service statique, la traversée de chemins, la protection API, le cycle CRUD des conversations, les entrées invalides, le setup administrateur, les cookies sécurisés, le login, la configuration de l’installation, la création et le cycle de vie des comptes/profils, leur isolation, ainsi que la sauvegarde/restauration chiffrée avec refus des secrets incorrects et fichiers altérés. Elle doit rester verte avant chaque publication.
 
 ## Conditions de publication GitHub
 
@@ -84,7 +84,7 @@ La suite couvre le service statique, la traversée de chemins, la protection API
 ## Ordre recommandé
 
 1. SQLite et migrations.
-2. Sauvegardes et récupération de la clé de chiffrement.
+2. Coffre natif du système pour la clé de chiffrement locale.
 3. Sessions distantes et tunnel HTTPS.
 4. Projets, recherche plein texte et planification.
 5. Runtime sandboxé pour les skills.

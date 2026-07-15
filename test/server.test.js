@@ -290,4 +290,32 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal(deletedUser.status, 200);
   const finalOverview = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
   assert.equal((await finalOverview.json()).users.length, 2);
+  const backupResponse = await fetch(`http://127.0.0.1:${port}/api/admin/backup`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ passphrase:'une-phrase-secrete-solide' })
+  });
+  assert.equal(backupResponse.status, 200);
+  const backup = (await backupResponse.json()).backup; const serializedBackup = JSON.stringify(backup);
+  assert.equal(backup.format, 'aster-backup');
+  assert.doesNotMatch(serializedBackup, /Conversation locale|ADMIN|passwordHash/);
+  const wrongRestore = await fetch(`http://127.0.0.1:${port}/api/admin/restore`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ backup, passphrase:'mauvaise-phrase-secrete', confirmation:'RESTAURER' })
+  });
+  assert.equal(wrongRestore.status, 400);
+  const altered = structuredClone(backup); altered.data = `${altered.data.slice(0, -2)}AA`;
+  const alteredRestore = await fetch(`http://127.0.0.1:${port}/api/admin/restore`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ backup:altered, passphrase:'une-phrase-secrete-solide', confirmation:'RESTAURER' })
+  });
+  assert.equal(alteredRestore.status, 400);
+  const restored = await fetch(`http://127.0.0.1:${port}/api/admin/restore`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ backup, passphrase:'une-phrase-secrete-solide', confirmation:'RESTAURER' })
+  });
+  const restoredBody = await restored.json();
+  assert.equal(restored.status, 200, JSON.stringify(restoredBody));
+  assert.equal(restoredBody.conversations, 1);
+  const revokedAfterRestore = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
+  assert.equal(revokedAfterRestore.status, 401);
+  const loginAfterRestore = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'ADMIN', password:'a-strong-local-password' })
+  });
+  assert.equal(loginAfterRestore.status, 200);
 });

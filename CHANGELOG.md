@@ -13,6 +13,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Politiques IA appliquées côté serveur : modèles, règles et skills déclarés.
 - File d’inférence FIFO et parallélisme indépendant par profil.
 - Suspension, réactivation et suppression protégée des comptes et profils avec révocation des sessions et nettoyage des conversations.
+- Sauvegarde portable chiffrée par phrase secrète et restauration locale avec validation intégrale et révocation de toutes les sessions.
 - CI Node 20/22/24, CodeQL et processus de publication.
 
 ### Sécurité
