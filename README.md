@@ -18,10 +18,11 @@ Aster Local est un espace IA open source et local-first inspiré par la simplici
 Prérequis : Node.js 20+ et [Ollama](https://ollama.com/) si vous souhaitez converser avec un modèle local.
 
 ```powershell
+npm.cmd run doctor
 npm.cmd start
 ```
 
-Ouvrez ensuite <http://127.0.0.1:4317>. Aucun `npm install` n’est nécessaire.
+Le diagnostic indique si Node, Ollama et un modèle sont prêts sans afficher de secret ni modifier la machine. Ouvrez ensuite <http://127.0.0.1:4317>. Aucun `npm install` n’est nécessaire.
 
 Au premier démarrage :
 

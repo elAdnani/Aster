@@ -6,7 +6,8 @@
   "description": "A private, local-first AI workspace for Gemma and Ollama.",
   "scripts": {
     "dev": "node --watch server/index.js",
-    "start": "node server/index.js",
+    "start": "node scripts/aster.mjs start",
+    "doctor": "node scripts/aster.mjs doctor",
     "test": "node --test"
   },
   "engines": { "node": ">=20" },

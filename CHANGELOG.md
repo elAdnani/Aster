@@ -4,6 +4,10 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 
 ## [Unreleased]
 
+### Ajouté
+
+- Diagnostic de démarrage multiplateforme sans dépendance pour Node, Aster, Ollama et les modèles locaux.
+
 ### Sécurité
 
 - Rotation du cookie de session lors de la sélection d’un profil.
