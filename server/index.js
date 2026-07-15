@@ -52,7 +52,13 @@ function publicProfile(profile) {
 }
 
 function publicUser(user, includeProfiles = false) {
-  return { id:user.id, username:user.username, role:user.role, ...(includeProfiles ? { profiles:user.profiles.map(publicProfile) } : {}) };
+  return { id:user.id, username:user.username, role:user.role, suspended:!!user.suspended, ...(includeProfiles ? { profiles:user.profiles.map(publicProfile) } : {}) };
+}
+
+function revokeUserSessions(userId, profileId = null) {
+  for (const [token, active] of sessions) {
+    if (active.userId === userId && (!profileId || active.profileId === profileId)) sessions.delete(token);
+  }
 }
 
 function checkPinRate(session, profileId) {
@@ -324,6 +330,7 @@ async function api(req, res, url) {
     const auth = await loadAuth();
     const user = auth.users.find(item => item.username === input.username);
     if (!user || !(await passwordMatches(input.password, user))) return json(res, 401, { error:'Identifiants incorrects.' });
+    if (user.suspended) return json(res, 403, { error:'Compte suspendu par l’administrateur.' });
     loginAttempts.delete(req.socket.remoteAddress || 'unknown');
     startSession(res, user, null);
     return json(res, 200, { user:publicUser(user), profiles:user.profiles.map(publicProfile), profile:null });
@@ -419,6 +426,57 @@ async function api(req, res, url) {
       return { profile:publicProfile(profile), profiles:user.profiles.map(publicProfile) };
     });
     return json(res, 201, result);
+  }
+  const adminUserMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})$/i);
+  if (adminUserMatch && req.method === 'PATCH') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const input = await body(req); const suspended = input.suspended;
+    if (typeof suspended !== 'boolean') return json(res, 400, { error:'État de suspension invalide.' });
+    const updated = await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      const user = auth.users.find(item => item.id === adminUserMatch[1]);
+      if (!user) throw Object.assign(new Error('Compte introuvable.'), { status:404 });
+      if (user.role === 'admin' || user.id === session.userId) throw Object.assign(new Error('Le compte administrateur principal ne peut pas être suspendu.'), { status:409 });
+      user.suspended = suspended;
+      return publicUser(user, true);
+    });
+    if (suspended) revokeUserSessions(updated.id);
+    return json(res, 200, { user:updated });
+  }
+  if (adminUserMatch && req.method === 'DELETE') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const input = await body(req); let deleted;
+    await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      const index = auth.users.findIndex(item => item.id === adminUserMatch[1]); const user = auth.users[index];
+      if (!user) throw Object.assign(new Error('Compte introuvable.'), { status:404 });
+      if (user.role === 'admin' || user.id === session.userId) throw Object.assign(new Error('Le compte administrateur principal ne peut pas être supprimé.'), { status:409 });
+      if (String(input.username || '') !== user.username) throw Object.assign(new Error('Confirmez la suppression avec l’identifiant exact.'), { status:400 });
+      deleted = { id:user.id, profileIds:user.profiles.map(profile => profile.id) }; auth.users.splice(index, 1);
+    });
+    revokeUserSessions(deleted.id);
+    await mutateConversations((conversations) => conversations.filter(item => !deleted.profileIds.includes(item.profileId)));
+    return json(res, 200, { ok:true });
+  }
+  const adminDeleteProfileMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})$/i);
+  if (adminDeleteProfileMatch && req.method === 'DELETE') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const input = await body(req); let deleted;
+    await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      const user = auth.users.find(item => item.id === adminDeleteProfileMatch[1]);
+      const index = user?.profiles.findIndex(item => item.id === adminDeleteProfileMatch[2]) ?? -1; const profile = user?.profiles[index];
+      if (!profile) throw Object.assign(new Error('Profil introuvable.'), { status:404 });
+      if (user.profiles.length <= 1) throw Object.assign(new Error('Un compte doit conserver au moins un profil.'), { status:409 });
+      if (String(input.name || '') !== profile.name) throw Object.assign(new Error('Confirmez la suppression avec le nom exact du profil.'), { status:400 });
+      deleted = { userId:user.id, profileId:profile.id }; user.profiles.splice(index, 1);
+    });
+    revokeUserSessions(deleted.userId, deleted.profileId);
+    await mutateConversations((conversations) => conversations.filter(item => item.profileId !== deleted.profileId));
+    return json(res, 200, { ok:true });
   }
   const adminPinMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})\/pin$/i);
   if (adminPinMatch && req.method === 'POST') {

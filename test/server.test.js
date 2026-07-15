@@ -247,4 +247,47 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal((await remoteList.json()).conversations.length, 0);
   const hidden = await fetch(`http://127.0.0.1:${port}/api/conversations/${localConversation.id}`, { headers:auth });
   assert.equal(hidden.status, 404);
+
+  const protectedAdmin = await fetch(`http://127.0.0.1:${port}/api/admin/users/${loginBody.user.id}`, {
+    method:'DELETE', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ username:'ADMIN' })
+  });
+  assert.equal(protectedAdmin.status, 409);
+  const suspended = await fetch(`http://127.0.0.1:${port}/api/admin/users/${member.id}`, {
+    method:'PATCH', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ suspended:true })
+  });
+  assert.equal(suspended.status, 200);
+  const suspendedLogin = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'membre', password:'another-strong-password' })
+  });
+  assert.equal(suspendedLogin.status, 403);
+  const reactivated = await fetch(`http://127.0.0.1:${port}/api/admin/users/${member.id}`, {
+    method:'PATCH', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ suspended:false })
+  });
+  assert.equal(reactivated.status, 200);
+  const memberLogin = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'membre', password:'another-strong-password' })
+  });
+  assert.equal(memberLogin.status, 200);
+  const memberCookie = memberLogin.headers.get('set-cookie').split(';')[0]; const memberLoginBody = await memberLogin.json();
+  const removedProfile = memberLoginBody.profiles[1];
+  const memberSelected = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
+    method:'POST', headers:{ cookie:memberCookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:removedProfile.id })
+  });
+  assert.equal(memberSelected.status, 200);
+  const memberConversation = await fetch(`http://127.0.0.1:${port}/api/conversations`, {
+    method:'POST', headers:{ cookie:memberCookie, 'content-type':'application/json' }, body:JSON.stringify({ title:'À effacer', messages:[] })
+  });
+  assert.equal(memberConversation.status, 201);
+  const deletedProfile = await fetch(`http://127.0.0.1:${port}/api/admin/users/${member.id}/profiles/${removedProfile.id}`, {
+    method:'DELETE', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ name:removedProfile.name })
+  });
+  assert.equal(deletedProfile.status, 200);
+  const revokedProfileSession = await fetch(`http://127.0.0.1:${port}/api/conversations`, { headers:{ cookie:memberCookie } });
+  assert.equal(revokedProfileSession.status, 401);
+  const deletedUser = await fetch(`http://127.0.0.1:${port}/api/admin/users/${member.id}`, {
+    method:'DELETE', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ username:'membre' })
+  });
+  assert.equal(deletedUser.status, 200);
+  const finalOverview = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
+  assert.equal((await finalOverview.json()).users.length, 2);
 });

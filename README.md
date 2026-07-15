@@ -75,13 +75,12 @@ Les pull requests exécutent les tests sur Node 20, 22 et 24 ainsi que CodeQL. V
 
 ## Feuille de route
 
-1. cycle de vie complet des comptes/profils et révocation des sessions ;
-2. coffre natif pour la clé de chiffrement et stratégie de sauvegarde/récupération ;
-3. stockage transactionnel léger et recherche plein texte ;
-4. projets/dossiers persistants, pièces jointes et planification ;
-5. runtime de skills sandboxé et permissions explicites ;
-6. accès distant HTTPS authentifié par compte et profil ;
-7. packaging desktop puis validation mobile.
+1. coffre natif pour la clé de chiffrement et stratégie de sauvegarde/récupération ;
+2. stockage transactionnel léger et recherche plein texte ;
+3. projets/dossiers persistants, pièces jointes et planification ;
+4. runtime de skills sandboxé et permissions explicites ;
+5. accès distant HTTPS authentifié par compte et profil ;
+6. packaging desktop puis validation mobile.
 
 ## Licence
 
