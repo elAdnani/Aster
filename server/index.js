@@ -287,6 +287,65 @@ function validateConversation(input, partial = false) {
   return output;
 }
 
+function backupPassphrase(value) {
+  const passphrase = String(value || '');
+  if (passphrase.length < 12 || passphrase.length > 256) throw Object.assign(new Error('La phrase secrète doit contenir entre 12 et 256 caractères.'), { status:400 });
+  return passphrase;
+}
+
+function validateBackupData(data) {
+  if (!data || data.version !== 1 || !data.auth || !Array.isArray(data.auth.users) || !Array.isArray(data.conversations)) throw new Error('Contenu de sauvegarde invalide.');
+  if (!['solo','family','custom'].includes(data.auth.installationMode) || data.auth.users.length < 1 || data.auth.users.length > 3) throw new Error('Configuration de comptes invalide.');
+  const userIds = new Set(); const usernames = new Set(); const profileIds = new Set(); let administrators = 0;
+  const encodedLength = (value, length) => typeof value === 'string' && Buffer.from(value, 'base64').length === length;
+  for (const user of data.auth.users) {
+    if (!user || !/^[0-9a-f-]{36}$/i.test(user.id) || userIds.has(user.id) || !/^[a-z0-9._-]{3,64}$/.test(user.username) || usernames.has(user.username) || !['admin','user'].includes(user.role) || !Array.isArray(user.profiles) || user.profiles.length < 1 || user.profiles.length > 4 || !encodedLength(user.passwordSalt, 16) || !encodedLength(user.passwordHash, 64) || ('suspended' in user && typeof user.suspended !== 'boolean')) throw new Error('Compte sauvegardé invalide.');
+    userIds.add(user.id); usernames.add(user.username); if (user.role === 'admin') administrators += 1;
+    for (const profile of user.profiles) {
+      if (!profile || !/^[0-9a-f-]{36}$/i.test(profile.id) || profileIds.has(profile.id) || typeof profile.name !== 'string' || !profile.name.trim() || profile.name.length > 80 || ((profile.pinSalt || profile.pinHash) && (!encodedLength(profile.pinSalt, 16) || !encodedLength(profile.pinHash, 64)))) throw new Error('Profil sauvegardé invalide.');
+      if (profile.policy) validatePolicy(profile.policy);
+      profileIds.add(profile.id);
+    }
+  }
+  if (administrators !== 1) throw new Error('La sauvegarde doit contenir un administrateur unique.');
+  if (data.auth.installationMode === 'solo' && data.auth.users.length !== 1) throw new Error('Mode d’installation incohérent.');
+  const conversationProfiles = new Set([...profileIds, 'remote']);
+  if (data.conversations.length > conversationProfiles.size * MAX_CONVERSATIONS) throw new Error('Trop de conversations dans la sauvegarde.');
+  const counts = new Map(); const ids = new Set(); const conversations = data.conversations.map(item => {
+    if (!item || !/^[0-9a-f-]{36}$/i.test(item.id) || ids.has(item.id) || !conversationProfiles.has(item.profileId)) throw new Error('Conversation sauvegardée invalide.');
+    ids.add(item.id); counts.set(item.profileId, (counts.get(item.profileId) || 0) + 1);
+    if (counts.get(item.profileId) > MAX_CONVERSATIONS) throw new Error('Limite de conversations dépassée dans la sauvegarde.');
+    if (typeof item.createdAt !== 'string' || item.createdAt.length > 40 || typeof item.updatedAt !== 'string' || item.updatedAt.length > 40) throw new Error('Horodatage de conversation invalide.');
+    return { id:item.id, profileId:item.profileId, ...validateConversation(item), createdAt:item.createdAt, updatedAt:item.updatedAt };
+  });
+  return { auth:data.auth, conversations };
+}
+
+async function createEncryptedBackup(passphrase) {
+  const salt = randomBytes(16); const iv = randomBytes(12); const createdAt = new Date().toISOString();
+  const key = Buffer.from(await scrypt(backupPassphrase(passphrase), salt, 32, SCRYPT_OPTIONS));
+  const auth = await loadAuth(); const allowedProfiles = new Set(['remote', ...auth.users.flatMap(user => user.profiles.map(profile => profile.id))]);
+  const conversations = (await loadConversations()).filter(item => allowedProfiles.has(item.profileId));
+  const payload = Buffer.from(JSON.stringify({ version:1, auth, conversations }), 'utf8');
+  const cipher = createCipheriv('aes-256-gcm', key, iv); cipher.setAAD(Buffer.from(`aster-backup-v1:${createdAt}`));
+  const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
+  return { format:'aster-backup', version:1, createdAt, kdf:{ name:'scrypt', N:SCRYPT_OPTIONS.N, r:SCRYPT_OPTIONS.r, p:SCRYPT_OPTIONS.p, salt:salt.toString('base64') }, cipher:{ name:'aes-256-gcm', iv:iv.toString('base64'), tag:cipher.getAuthTag().toString('base64') }, data:encrypted.toString('base64') };
+}
+
+async function openEncryptedBackup(envelope, passphrase) {
+  try {
+    if (!envelope || envelope.format !== 'aster-backup' || envelope.version !== 1 || envelope.kdf?.name !== 'scrypt' || envelope.kdf.N !== SCRYPT_OPTIONS.N || envelope.kdf.r !== SCRYPT_OPTIONS.r || envelope.kdf.p !== SCRYPT_OPTIONS.p || envelope.cipher?.name !== 'aes-256-gcm') throw new Error('format');
+    const salt = Buffer.from(envelope.kdf.salt, 'base64'); const iv = Buffer.from(envelope.cipher.iv, 'base64'); const tag = Buffer.from(envelope.cipher.tag, 'base64');
+    if (salt.length !== 16 || iv.length !== 12 || tag.length !== 16 || typeof envelope.data !== 'string' || envelope.data.length > 60_000_000) throw new Error('format');
+    const key = Buffer.from(await scrypt(backupPassphrase(passphrase), salt, 32, SCRYPT_OPTIONS));
+    const decipher = createDecipheriv('aes-256-gcm', key, iv); decipher.setAAD(Buffer.from(`aster-backup-v1:${envelope.createdAt}`)); decipher.setAuthTag(tag);
+    return validateBackupData(JSON.parse(Buffer.concat([decipher.update(Buffer.from(envelope.data, 'base64')), decipher.final()]).toString('utf8')));
+  } catch (error) {
+    if (error.status) throw error;
+    throw Object.assign(new Error('Sauvegarde invalide, altérée ou phrase secrète incorrecte.'), { status:400 });
+  }
+}
+
 function validatePolicy(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw Object.assign(new Error('Politique invalide.'), { status:400 });
   const allowedModels = Array.isArray(input.allowedModels) ? [...new Set(input.allowedModels.map(value => String(value).trim()).filter(Boolean))] : [];
@@ -382,6 +441,29 @@ async function api(req, res, url) {
     const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
     if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
     return json(res, 200, { installationMode:auth.installationMode, maxUsers:auth.installationMode === 'solo' ? 1 : 3, users:auth.users.map(user => publicUser(user, true)) });
+  }
+  if (url.pathname === '/api/admin/backup' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Sauvegarde administrateur autorisée uniquement en local.' });
+    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    const input = await body(req); const backup = await createEncryptedBackup(input.passphrase);
+    return json(res, 200, { backup });
+  }
+  if (url.pathname === '/api/admin/restore' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Restauration administrateur autorisée uniquement en local.' });
+    const currentAuth = await loadAuth(); const administrator = currentAuth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    const input = await body(req, 50_000_000);
+    if (input.confirmation !== 'RESTAURER') return json(res, 400, { error:'Confirmation de restauration invalide.' });
+    const restored = await openEncryptedBackup(input.backup, input.passphrase); const currentConversations = await loadConversations();
+    try {
+      await saveAuth(restored.auth); await saveConversations(restored.conversations);
+    } catch (error) {
+      await saveAuth(currentAuth).catch(() => {}); await saveConversations(currentConversations).catch(() => {});
+      throw Object.assign(new Error('Restauration interrompue ; les données précédentes ont été conservées.'), { status:500, cause:error });
+    }
+    sessions.clear(); loginAttempts.clear(); pinAttempts.clear(); res.setHeader('set-cookie', sessionCookie('', 0));
+    return json(res, 200, { ok:true, users:restored.auth.users.length, conversations:restored.conversations.length });
   }
   if (url.pathname === '/api/admin/config' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });

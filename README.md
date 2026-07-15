@@ -75,7 +75,7 @@ Les pull requests exécutent les tests sur Node 20, 22 et 24 ainsi que CodeQL. V
 
 ## Feuille de route
 
-1. coffre natif pour la clé de chiffrement et stratégie de sauvegarde/récupération ;
+1. coffre natif du système pour la clé de chiffrement locale ;
 2. stockage transactionnel léger et recherche plein texte ;
 3. projets/dossiers persistants, pièces jointes et planification ;
 4. runtime de skills sandboxé et permissions explicites ;
