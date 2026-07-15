@@ -49,6 +49,8 @@ test('serves the application shell', async () => {
   assert.equal(response.status, 200);
   const csp = response.headers.get('content-security-policy'); const html = await response.text();
   assert.match(html, /Aster Local/);
+  assert.match(html, /Identifiant du compte/);
+  assert.doesNotMatch(html, /accountEmail|Adresse du compte|profileRole/);
   assert.doesNotMatch(csp, /unsafe-inline/);
   assert.doesNotMatch(html, /<style>|<script>(?!\s*<\/script>)/i);
   assert.match(html, /bootstrap\.js/);
@@ -297,6 +299,17 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal(selected.status, 200);
   const rotatedCookie = selected.headers.get('set-cookie')?.split(';')[0];
   assert.ok(rotatedCookie); assert.notEqual(rotatedCookie, cookie); cookie = rotatedCookie;
+  const renamedProfile = await fetch(`http://127.0.0.1:${port}/api/admin/users/${loginBody.user.id}/profiles/${adminProfile.id}`, {
+    method:'PATCH', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ name:'Profil renommé' })
+  });
+  assert.equal(renamedProfile.status, 200);
+  assert.equal((await renamedProfile.json()).profile.name, 'Profil renommé');
+  const renamedStatus = await fetch(`http://127.0.0.1:${port}/api/auth/status`, { headers:{ cookie } });
+  assert.equal((await renamedStatus.json()).profile.name, 'Profil renommé');
+  const invalidRename = await fetch(`http://127.0.0.1:${port}/api/admin/users/${loginBody.user.id}/profiles/${adminProfile.id}`, {
+    method:'PATCH', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ name:'   ' })
+  });
+  assert.equal(invalidRename.status, 400);
   const catalogBefore = await fetch(`http://127.0.0.1:${port}/api/admin/models/catalog`, { headers:{ cookie } });
   const catalogBeforeBody = await catalogBefore.json();
   assert.equal(catalogBeforeBody.engineAvailable, true);

@@ -819,6 +819,20 @@ async function api(req, res, url) {
     return json(res, 200, { ok:true });
   }
   const adminDeleteProfileMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})$/i);
+  if (adminDeleteProfileMatch && req.method === 'PATCH') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const input = await body(req); const name = String(input.name || '').trim();
+    if (!name || name.length > 40) return json(res, 400, { error:'Nom de profil invalide.' });
+    const updated = await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      const user = auth.users.find(item => item.id === adminDeleteProfileMatch[1]); const profile = user?.profiles.find(item => item.id === adminDeleteProfileMatch[2]);
+      if (!profile) throw Object.assign(new Error('Profil introuvable.'), { status:404 });
+      if (user.profiles.some(item => item.id !== profile.id && item.name.toLocaleLowerCase('fr') === name.toLocaleLowerCase('fr'))) throw Object.assign(new Error('Ce compte possède déjà un profil portant ce nom.'), { status:409 });
+      profile.name = name; return publicProfile(profile);
+    });
+    return json(res, 200, { profile:updated });
+  }
   if (adminDeleteProfileMatch && req.method === 'DELETE') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
     const input = await body(req);
