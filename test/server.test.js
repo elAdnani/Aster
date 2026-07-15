@@ -74,8 +74,19 @@ test('reports a lightweight startup diagnostic without exposing credentials', as
   });
   assert.equal(result.code, 0, result.stderr); const report = JSON.parse(result.stdout);
   assert.equal(report.node.supported, true); assert.equal(report.aster.available, false); assert.equal(report.ollama.available, false); assert.equal(report.ready, false);
+  assert.equal(report.network.valid, true);
   assert.equal(report.ollama.endpoint, `http://127.0.0.1:${port + 7}`);
   assert.doesNotMatch(result.stdout, /private-user|private-password|C:\\Users|AppData/i);
+});
+
+test('fails clearly when a wildcard binding has no allowed hosts', async () => {
+  const result = await new Promise((resolve, reject) => {
+    const processUnderTest = spawn(process.execPath, ['scripts/aster.mjs', 'start'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(port + 8), HOST:'0.0.0.0', ASTER_ALLOWED_HOSTS:'', ASTER_DATA_DIR:join(dataDir, 'invalid-network') } });
+    let stderr = ''; processUnderTest.stderr.on('data', chunk => { stderr += chunk; }); processUnderTest.once('error', reject); processUnderTest.once('close', code => resolve({ code,stderr }));
+  });
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /ASTER_ALLOWED_HOSTS est requis/);
+  assert.doesNotMatch(result.stderr, /C:\\Users\\|AppData/i);
 });
 
 test('protects API routes when a token is configured', async () => {

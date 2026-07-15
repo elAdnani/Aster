@@ -10,6 +10,8 @@ const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 4317);
 const configuredHosts = String(process.env.ASTER_ALLOWED_HOSTS || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
 const loopbackBinding = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+const wildcardBinding = host === '0.0.0.0' || host === '::';
+if (wildcardBinding && configuredHosts.length === 0) throw new Error('ASTER_ALLOWED_HOSTS est requis lorsque HOST écoute toutes les interfaces.');
 const allowedHostnames = new Set([...(loopbackBinding ? ['127.0.0.1','localhost','::1'] : []), ...(!['0.0.0.0','::'].includes(host) ? [host.toLowerCase()] : []), ...configuredHosts]);
 const ollama = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
 const remoteToken = process.env.ASTER_REMOTE_TOKEN || '';

@@ -20,20 +20,25 @@ async function doctor() {
   const major = Number(process.versions.node.split('.')[0]);
   const port = Number(process.env.PORT || 4317);
   const host = process.env.HOST || '127.0.0.1';
+  const allowedHosts = String(process.env.ASTER_ALLOWED_HOSTS || '').split(',').map(value => value.trim()).filter(Boolean);
+  const wildcardBinding = host === '0.0.0.0' || host === '::';
+  const probeHost = wildcardBinding ? '127.0.0.1' : host;
   const ollama = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
   const [aster, engine] = await Promise.all([
-    probe(`http://${host}:${port}/api/auth/status`),
+    probe(`http://${probeHost}:${port}/api/auth/status`),
     probe(`${ollama}/api/tags`)
   ]);
   const report = {
     node:{ version:process.versions.node, supported:major >= 20 },
-    aster:{ available:aster.available, endpoint:`http://${host}:${port}`, configured:!!aster.data?.configured },
+    network:{ binding:host, valid:!wildcardBinding || allowedHosts.length > 0, allowedHosts:allowedHosts.length },
+    aster:{ available:aster.available, endpoint:`http://${probeHost}:${port}`, configured:!!aster.data?.configured },
     ollama:{ available:engine.available, endpoint:publicEndpoint(ollama), models:(engine.data?.models || []).map(item => String(item.name || '')).filter(Boolean).slice(0, 50) },
-    ready:major >= 20 && engine.available && (engine.data?.models || []).length > 0
+    ready:major >= 20 && (!wildcardBinding || allowedHosts.length > 0) && aster.available && engine.available && (engine.data?.models || []).length > 0
   };
   if (jsonOutput) console.log(JSON.stringify(report));
   else {
     console.log(`Node.js ${report.node.version} — ${report.node.supported ? 'compatible' : 'version 20+ requise'}`);
+    console.log(`Réseau ${report.network.valid ? 'valide' : 'invalide'} — écoute ${report.network.binding}${wildcardBinding ? ` · ${report.network.allowedHosts} hôte(s) autorisé(s)` : ''}`);
     console.log(`Aster ${report.aster.available ? 'déjà lancé' : 'arrêté'} — ${report.aster.endpoint}`);
     console.log(`Ollama ${report.ollama.available ? 'disponible' : 'indisponible'} — ${report.ollama.endpoint}`);
     console.log(report.ollama.models.length ? `Modèles : ${report.ollama.models.join(', ')}` : 'Aucun modèle local détecté.');
