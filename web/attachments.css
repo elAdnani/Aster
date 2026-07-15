@@ -1,0 +1,7 @@
+.attachment-tray{display:flex;flex-wrap:wrap;gap:7px;padding:0 2px 8px}
+.attachment-chip,.message-attachment{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:6px 9px;border:1px solid var(--line);border-radius:9px;background:#f7f3ed;color:var(--text);font-size:12px}
+.attachment-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attachment-chip button{min-width:28px;min-height:28px;border-radius:7px;color:var(--muted)}
+.attach{min-height:44px;padding:7px 10px;border:1px solid var(--line);border-radius:9px}
+.message-attachments{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px}
+#prompt{field-sizing:content;max-height:180px}

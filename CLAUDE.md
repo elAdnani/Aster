@@ -9,7 +9,7 @@ Protect the v0.1 vertical slice: responsive PWA, Ollama streaming, browser-local
 
 ## Review lenses shared from the Codex workflow
 
-- Load `.claude/skills/design-taste-frontend/SKILL.md` for frontend creation or redesign work.
+- Load `.claude/skills/aster-ui-craft/SKILL.md` for frontend creation or redesign work.
 - Contrarian: find scope, privacy and security failures.
 - First principles: optimize for user control, not feature parity.
 - Executor: prefer a tested end-to-end path over scaffolding.

@@ -1,18 +1,18 @@
 # Aster Local — état, audit et feuille de route
 
-Date de l’audit : 15 juillet 2026. Version : prototype `0.1.0`.
+Date de l’audit : 15 juillet 2026. Version : release candidate `0.2.0-alpha.3`.
 
 ## Résumé exécutif
 
 Aster est aujourd’hui un prototype local-first utilisable pour créer un compte administrateur, choisir un profil, conserver des conversations séparées et dialoguer avec un moteur Ollama local. Le socle n’utilise aucune dépendance npm d’exécution, ce qui réduit fortement la taille et la surface d’attaque.
 
-Le dépôt peut être publié comme **prototype expérimental**, mais pas encore présenté comme une solution de sécurité achevée, un client distant prêt pour Internet ou une alternative complète à ChatGPT/Codex. Les conversations sont isolées logiquement par profil mais restent en clair sur le disque.
+Le dépôt est publiable comme **prototype expérimental**, mais pas encore présentable comme une solution de sécurité achevée, un client distant prêt pour Internet ou une alternative complète à ChatGPT/Codex. Conversations, projets, tâches et pièces jointes texte sont isolés par profil et chiffrés au repos.
 
 ## Ce qui fonctionne
 
 - Serveur Node.js sans dépendance externe, lié à `127.0.0.1` par défaut.
 - PWA responsive et installable.
-- Détection d’Ollama et catalogue des modèles installés.
+- Détection d’Ollama, catalogue Gemma 4 sourcé et installation locale explicite avec progression.
 - Chat en streaming avec arrêt de génération.
 - Conversations persistantes avec création, lecture, renommage, suppression et chiffrement AES-256-GCM.
 - Premier compte administrateur créé uniquement depuis la boucle locale.
@@ -25,7 +25,10 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - Politiques par profil appliquées côté serveur : modèles autorisés, règles système, skills déclarés et limite parallèle préparée.
 - File d’inférence FIFO par profil, avec parallélisme administrateur réellement appliqué, annulation et plafond de 25 attentes.
 - Création de comptes non administrateurs et ajout de profils par l’administrateur.
-- Recherche visuelle dans les conversations, amorces Projets, Planification, Plugins et Bibliothèque.
+- Projets chiffrés par profil, déplacement des conversations et recherche serveur dans les titres et messages.
+- Amorces Plugins et Bibliothèque encore non persistantes.
+- Planification chiffrée par profil avec tâches, échéances et rattachement aux projets.
+- Pièces jointes TXT, Markdown, JSON et CSV chiffrées, bornées et transmises au modèle comme données non fiables.
 - VPN, Proton VPN et Tor présentés uniquement comme options futures, jamais activés automatiquement.
 
 ## Sécurité mise en place
@@ -33,7 +36,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - API métier fermée sans session ou jeton distant configuré.
 - Routes administrateur limitées au rôle `admin` et à une connexion loopback réelle.
 - Données et `.env` exclus de Git.
-- Écriture atomique des fichiers d’authentification et de conversations, avec mutations concurrentes sérialisées.
+- Écritures atomiques, file globale de mutations et journal de rollback multi-stockages récupéré automatiquement après interruption.
 - Clé de chiffrement distincte dérivée par profil via HKDF ; contenus et titres absents du JSON en clair.
 - Limites de taille sur les corps, messages et conversations.
 - Limitation basique des tentatives de connexion : huit essais par adresse sur dix minutes.
@@ -48,22 +51,18 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 1. La clé maîtresse se trouve sur le même compte système que les données. Prévoir sauvegarde/récupération protégée et intégration au coffre de clés du système pour le packaging desktop.
 2. Le jeton distant est un secret global et ne représente pas un utilisateur. Remplacer par des sessions distantes authentifiées, révocables et limitées au profil.
 3. Le serveur ne fournit pas TLS. L’accès distant doit obligatoirement passer par un tunnel ou réseau privé audité avec HTTPS.
-4. Les comptes ne disposent pas encore de récupération de mot de passe, rotation des sessions, liste de sessions ni révocation par appareil.
+4. Les comptes disposent d’une liste de sessions en mémoire et d’une révocation par appareil ; récupération de mot de passe et rotation périodique restent à concevoir avant l’accès distant.
 
 ### Priorité élevée
 
 1. Les sessions sont en mémoire et disparaissent au redémarrage. C’est sûr mais peu pratique ; une persistance chiffrée et révocable sera nécessaire.
 2. Le stockage JSON deviendra fragile avec plusieurs requêtes et de gros historiques. Migrer vers SQLite avec contraintes d’appartenance et transactions.
 3. Les règles, modèles et quotas parallèles sont appliqués côté serveur, mais les skills et routes VPN n’ont pas encore de moteur d’exécution. Ne pas les présenter comme capacités actives.
-4. La politique CSP autorise encore les scripts et styles inline pour conserver l’interface actuelle. Extraire le code inline afin de supprimer `unsafe-inline`.
+4. La CSP interdit maintenant les scripts et styles inline ; conserver ce contrôle dans la CI.
 5. Aucun test navigateur automatisé complet, test mobile visuel, audit WCAG ou test de charge n’est encore présent.
 
 ### Fonctionnalités incomplètes
 
-- Suppression/suspension de compte et profil avec gestion des données associées.
-- Dossiers/projets persistants et déplacement des conversations.
-- Recherche serveur dans le contenu des messages.
-- Planification persistante.
 - Installation, permissions et sandbox des plugins/skills.
 - Détection automatique RAM/VRAM pour recommander la limite parallèle ; la limite choisie est déjà appliquée.
 - Import/export réellement filtré et chiffré par profil.
@@ -71,7 +70,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 ## État des tests
 
-La suite couvre le service statique, la traversée de chemins, la protection API, le cycle CRUD des conversations, les entrées invalides, le setup administrateur, les cookies sécurisés, le login, la configuration de l’installation, la création de comptes/profils et l’isolation entre profils. Elle doit rester verte avant chaque publication.
+La suite couvre le service statique, la traversée de chemins, la protection API, le cycle CRUD des conversations, les entrées invalides, le setup administrateur, les cookies sécurisés, le login, la configuration de l’installation, la création et le cycle de vie des comptes/profils, leur isolation, ainsi que la sauvegarde/restauration chiffrée avec refus des secrets incorrects et fichiers altérés. Elle doit rester verte avant chaque publication.
 
 ## Conditions de publication GitHub
 
@@ -84,11 +83,9 @@ La suite couvre le service statique, la traversée de chemins, la protection API
 
 ## Ordre recommandé
 
-1. SQLite et migrations.
-2. PIN et cycle de vie comptes/profils.
-3. Règles/skills réellement appliqués côté serveur.
-4. Chiffrement au repos et sauvegardes.
-5. Sessions distantes et tunnel HTTPS.
-6. Projets, recherche plein texte et planification.
-7. Gestion des requêtes Ollama, files et parallélisme.
-8. Packaging desktop, tests multiplateformes et première bêta.
+1. SQLite et migrations mesurées face au stockage JSON transactionnel actuel.
+2. Coffre natif du système pour la clé de chiffrement locale.
+3. Sessions distantes et tunnel HTTPS.
+4. Index de recherche plein texte incrémental et vues de planification avancées.
+5. Runtime sandboxé pour les skills.
+6. Packaging desktop, tests multiplateformes et première bêta.

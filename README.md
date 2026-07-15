@@ -37,14 +37,20 @@ Exemple, uniquement si ce modèle existe dans votre installation Ollama :
 ollama pull gemma4:12b
 ```
 
+L’administrateur peut aussi lancer cette installation depuis le [catalogue local documenté](./docs/model-catalog.md). Aster demande toujours confirmation et n’installe rien en arrière-plan.
+
 Le nom du modèle est configurable et n’est pas une dépendance du projet.
 
 ## Fonctions présentes
 
 - PWA responsive pour ordinateur et mobile.
 - Chat Ollama en streaming, arrêt de génération et historique persistant.
-- Recherche visuelle, renommage, suppression et amorces Projets/Planification.
+- Pièces jointes texte chiffrées et bornées, transmises au modèle comme documents non fiables.
+- Projets chiffrés persistants, déplacement des conversations et recherche serveur dans les titres et messages.
+- Planification privée par profil avec tâches, échéances et rattachement facultatif à un projet.
+- Stockage JSON atomique avec [journal de transaction récupérable](./docs/storage-transactions.md) pour les opérations multi-fichiers.
 - Comptes administrateur/utilisateur, sélection de profils et déconnexion.
+- Gestion des sessions du compte avec révocation par appareil, sans journaliser l’adresse IP ni le navigateur complet.
 - PIN de profil haché avec scrypt et essais limités.
 - Isolation serveur des conversations par profil.
 - Chiffrement authentifié des titres, messages et modèles au repos.
@@ -75,13 +81,12 @@ Les pull requests exécutent les tests sur Node 20, 22 et 24 ainsi que CodeQL. V
 
 ## Feuille de route
 
-1. cycle de vie complet des comptes/profils et révocation des sessions ;
-2. coffre natif pour la clé de chiffrement et stratégie de sauvegarde/récupération ;
-3. stockage transactionnel léger et recherche plein texte ;
-4. projets/dossiers persistants, pièces jointes et planification ;
-5. runtime de skills sandboxé et permissions explicites ;
-6. accès distant HTTPS authentifié par compte et profil ;
-7. packaging desktop puis validation mobile.
+1. coffre natif du système pour la clé de chiffrement locale ;
+2. stockage transactionnel léger et index de recherche plein texte ;
+3. extraction isolée des PDF/images et vues de planification avancées ;
+4. runtime de skills sandboxé et permissions explicites ;
+5. accès distant HTTPS authentifié par compte et profil ;
+6. packaging desktop puis validation mobile.
 
 ## Licence
 
