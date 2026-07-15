@@ -185,6 +185,24 @@ test('logs in locally and isolates conversations by profile', async () => {
     method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:adminProfile.id, pin:'2468' })
   });
   assert.equal(selected.status, 200);
+  const policySaved = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, {
+    method:'PUT', headers:{ cookie, 'content-type':'application/json' },
+    body:JSON.stringify({ allowedModels:['allowed-local-model'], allowedSkills:['writing'], rules:'Répondre brièvement.', parallelRequests:1 })
+  });
+  assert.equal(policySaved.status, 200);
+  const policyRead = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, { headers:{ cookie } });
+  assert.deepEqual((await policyRead.json()).policy.allowedModels, ['allowed-local-model']);
+  const memberPolicy = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, {
+    method:'PUT', headers:{ cookie, 'content-type':'application/json' },
+    body:JSON.stringify({ userId:member.id, profileId:member.profiles[0].id, allowedModels:['member-model'], allowedSkills:[], rules:'Règles membre.', parallelRequests:1 })
+  });
+  assert.equal(memberPolicy.status, 200);
+  const memberPolicyRead = await fetch(`http://127.0.0.1:${port}/api/admin/policy?userId=${member.id}&profileId=${member.profiles[0].id}`, { headers:{ cookie } });
+  assert.deepEqual((await memberPolicyRead.json()).policy.allowedModels, ['member-model']);
+  const deniedModel = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ model:'gemma4:12b', messages:[] })
+  });
+  assert.equal(deniedModel.status, 403);
   const created = await fetch(`http://127.0.0.1:${port}/api/conversations`, {
     method:'POST', headers:{ cookie, 'content-type':'application/json' },
     body:JSON.stringify({ title:'Conversation locale', messages:[] })
