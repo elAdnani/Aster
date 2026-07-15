@@ -18,6 +18,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Planification chiffrée par profil avec échéances, tâches terminées et rattachement aux projets.
 - Catalogue Gemma 4 vérifié, détection des variantes installées et installation Ollama explicite avec progression.
 - File d’écriture globale et journal de transaction récupérable pour les mutations touchant plusieurs stockages.
+- Pièces jointes TXT, Markdown, JSON et CSV chiffrées avec quotas et rattachement vérifié côté serveur.
 - CI Node 20/22/24, CodeQL et processus de publication.
 
 ### Sécurité
@@ -25,6 +26,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Sessions `HttpOnly`, `SameSite=Strict`, révocables et gardées en mémoire.
 - Administration limitée au rôle administrateur et aux connexions loopback.
 - Mutations des fichiers JSON sérialisées et écritures atomiques.
+- Fichiers traités comme texte non fiable, jamais comme HTML ou instructions système.
 - CSP, protection iframe, validation d’origine et limitation du login.
 - Suppression de l’adresse personnelle des métadonnées Git avant le premier push.
 
@@ -32,7 +34,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 
 - Accès distant non prêt pour Internet public.
 - Clé de chiffrement stockée dans le même compte système que les données.
-- Skills, VPN/Tor, pièces jointes et vues de planification avancées encore incomplets.
+- Skills, VPN/Tor, formats de pièces jointes binaires et vues de planification avancées encore incomplets.
 
 ## [0.1.0-alpha.1] - 2026-07-15
 

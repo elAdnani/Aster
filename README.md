@@ -45,6 +45,7 @@ Le nom du modèle est configurable et n’est pas une dépendance du projet.
 
 - PWA responsive pour ordinateur et mobile.
 - Chat Ollama en streaming, arrêt de génération et historique persistant.
+- Pièces jointes texte chiffrées et bornées, transmises au modèle comme documents non fiables.
 - Projets chiffrés persistants, déplacement des conversations et recherche serveur dans les titres et messages.
 - Planification privée par profil avec tâches, échéances et rattachement facultatif à un projet.
 - Stockage JSON atomique avec [journal de transaction récupérable](./docs/storage-transactions.md) pour les opérations multi-fichiers.
@@ -81,7 +82,7 @@ Les pull requests exécutent les tests sur Node 20, 22 et 24 ainsi que CodeQL. V
 
 1. coffre natif du système pour la clé de chiffrement locale ;
 2. stockage transactionnel léger et index de recherche plein texte ;
-3. pièces jointes et vues de planification avancées ;
+3. extraction isolée des PDF/images et vues de planification avancées ;
 4. runtime de skills sandboxé et permissions explicites ;
 5. accès distant HTTPS authentifié par compte et profil ;
 6. packaging desktop puis validation mobile.
