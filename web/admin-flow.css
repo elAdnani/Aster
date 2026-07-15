@@ -1,0 +1,15 @@
+dialog#settings{padding:0;overflow:hidden}
+.account-center,.account-main,.account-scroll{min-height:0}
+.account-main{grid-template-rows:auto minmax(0,1fr) auto}
+.account-scroll{max-height:100%;overflow-y:scroll;overscroll-behavior:contain}
+.formula-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:18px 0;padding:0;border:0}
+.formula-picker legend{margin-bottom:10px;font-size:12px;font-weight:750}
+.formula-picker label{position:relative;display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);cursor:pointer}
+.formula-picker label:has(input:checked){border-color:var(--blue);background:#f0f2ff}
+.formula-picker input{margin-top:2px}.formula-picker span{display:grid;gap:4px}.formula-picker b{font-size:12px}.formula-picker small{color:var(--muted);font-size:10px;line-height:1.4}.formula-picker em{grid-column:2;color:#3946b8;font-size:9px;font-style:normal;font-weight:750}
+@media(max-width:680px){.formula-picker{grid-template-columns:1fr}.account-scroll{max-height:none}}
+.sidebar-search{display:flex;align-items:center;gap:8px;margin:14px 0 8px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.35);color:var(--muted)}
+.sidebar-search input{min-width:0;width:100%;border:0;outline:0;background:transparent;font-size:11px}.workspace-nav{display:grid;gap:2px;margin-bottom:4px}.workspace-nav button{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;text-align:left;color:#55545d;font-size:11px}.workspace-nav button:hover{background:rgba(255,255,255,.48)}.workspace-nav span{width:16px;color:var(--blue)}
+.availability{color:var(--muted);font-size:10px}.model-working .orb span,.model-working .brand-mark{animation:aster-working 1.4s ease-in-out infinite}@keyframes aster-working{50%{transform:rotate(16deg) scale(1.08)}}
+@media(prefers-reduced-motion:reduce){.model-working .orb span,.model-working .brand-mark{animation:none}}
+.admin-users{display:grid;gap:8px}.admin-user{display:grid;grid-template-columns:1fr auto;gap:10px;padding:13px;border-bottom:1px solid var(--line)}.admin-user>div:first-child{display:grid;gap:3px}.admin-user small{color:var(--muted);font-size:10px}.admin-profiles{display:flex;grid-column:1/-1;flex-wrap:wrap;gap:6px}.admin-profiles span{padding:5px 7px;border-radius:7px;background:var(--bg);font-size:10px}.admin-user button{grid-column:2;grid-row:1;padding:7px 9px;border:1px solid var(--line);border-radius:8px}.admin-create{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-top:15px;border-top:1px solid var(--line)}.admin-create label:last-of-type,.admin-create button{grid-column:1/-1}.inline-state{min-height:18px;margin:0;color:#9a4c43;font-size:11px}@media(max-width:680px){.admin-create{grid-template-columns:1fr}.admin-create>*{grid-column:1!important}}

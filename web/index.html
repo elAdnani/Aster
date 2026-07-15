@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f4f1e8">
+  <meta name="description" content="Votre IA locale, privée et accessible selon vos règles.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/control-center.css">
+  <link rel="stylesheet" href="/admin-catalog.css">
+  <link rel="stylesheet" href="/account-center.css">
+  <link rel="stylesheet" href="/auth.css?v=9">
+  <link rel="stylesheet" href="/admin-flow.css?v=12">
+  <style>.thread-row{position:relative;display:flex;border-radius:9px}.thread-row.active{background:rgba(255,255,255,.55)}.thread-row .thread{min-width:0;flex:1;background:transparent}.thread-menu{width:36px;color:var(--muted)}.thread-popover{position:absolute;z-index:4;right:4px;top:36px;display:grid;min-width:130px;padding:5px;border:1px solid var(--line);border-radius:10px;background:var(--white);box-shadow:var(--shadow)}.thread-popover button{padding:9px;text-align:left}.thread-popover .danger{color:#a23f32}.offline-help{max-width:760px;margin:0 auto 18px;padding:14px 16px;border:1px solid #dfb69e;border-radius:13px;background:#fff7ee;line-height:1.45}.offline-help strong,.offline-help span{display:block}.offline-help span{font-size:13px;color:var(--muted)}.offline-help button,.data-actions button{margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:8px}.status.offline i{background:#bd654d}.composer-bar{gap:10px}.composer-bar>span{margin-right:auto}.stop{padding:8px 12px;border-radius:10px;background:#8e493b;color:white}.data-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.check{display:flex!important;align-items:center}.check input{width:auto}.scrim{position:fixed;inset:0;z-index:9;background:rgba(32,31,27,.28)}.compact .message{margin-bottom:16px;line-height:1.45}button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid rgba(216,107,67,.35);outline-offset:2px}@media(max-width:760px){.data-actions{grid-template-columns:1fr}.composer-bar>span{display:none}}</style>
+  <title>Aster Local</title>
+</head>
+<body>
+  <main id="authGate" class="auth-gate" aria-live="polite">
+    <section class="auth-panel">
+      <div class="auth-brand"><span class="brand-mark">✦</span><span>Aster</span><small>LOCAL</small></div>
+      <div id="authLoading" class="auth-state"><h1>Ouverture de votre espace</h1><p>Vérification de la session locale…</p></div>
+      <form id="setupForm" class="auth-state" hidden>
+        <p class="auth-kicker">PREMIÈRE INSTALLATION</p><h1>Créez le compte administrateur</h1>
+        <p>Ce compte est créé sur cette machine. Lui seul pourra modifier les règles locales d’Aster.</p>
+        <label>Identifiant<input id="setupUsername" autocomplete="username" required maxlength="80"></label>
+        <label>Mot de passe<input id="setupPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+        <label>Nom du profil<input id="setupProfile" autocomplete="nickname" required maxlength="40" value="Profil principal"></label>
+        <p class="auth-hint">Utilisez au moins 12 caractères. Aster ne conserve jamais le mot de passe en clair.</p>
+        <p class="auth-error" role="alert"></p><button class="primary" type="submit">Créer mon espace</button>
+      </form>
+      <form id="loginForm" class="auth-state" hidden>
+        <p class="auth-kicker">CONNEXION</p><h1>Heureux de vous revoir</h1><p>Connectez-vous avant d’accéder aux profils et aux conversations.</p>
+        <label>Identifiant<input id="loginUsername" autocomplete="username" required></label>
+        <label>Mot de passe<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+        <p class="auth-error" role="alert"></p><button class="primary" type="submit">Se connecter</button>
+      </form>
+      <section id="profileGate" class="auth-state profile-gate" hidden><p class="auth-kicker">QUI UTILISE ASTER ?</p><h1>Choisissez votre profil</h1><div id="profileChoices" class="profile-choices"></div><p class="auth-error" role="alert"></p><button id="logoutGate" class="auth-link" type="button">Changer de compte</button></section>
+    </section>
+  </main>
+  <div id="scrim" class="scrim" hidden></div>
+  <div class="app" hidden>
+    <aside id="sidebar" class="sidebar" aria-label="Conversations">
+      <div class="brand"><span class="brand-mark">✦</span><span>Aster</span><small>LOCAL</small></div>
+      <button id="profileBtn" class="profile-chip"><span id="profileAvatar">P</span><span><b id="profileName">Profil local</b><small>Sur cet appareil</small></span><span aria-hidden="true">›</span></button>
+      <button id="newChat" class="new-chat"><span>＋</span> Nouvelle conversation</button>
+      <label class="sidebar-search"><span>⌕</span><input id="conversationSearch" type="search" placeholder="Rechercher dans les chats" aria-label="Rechercher dans les conversations"></label>
+      <nav class="workspace-nav" aria-label="Espaces de travail"><button id="projectsNav" type="button"><span>▣</span> Projets</button><button id="planningNav" type="button"><span>◷</span> Planification</button><button id="pluginsNav" type="button"><span>◇</span> Plugins</button><button id="libraryNav" type="button"><span>▤</span> Bibliothèque</button></nav>
+      <div class="section-label">RÉCENT</div>
+      <nav id="threads" class="threads"></nav>
+      <div class="sidebar-foot">
+        <button id="settingsBtn" class="ghost">⚙ Réglages</button>
+      </div>
+    </aside>
+    <main class="main">
+      <header>
+        <button id="menuBtn" class="icon-btn menu" aria-label="Ouvrir le menu" aria-expanded="false">☰</button>
+        <div class="model-wrap"><label for="model">Modèle local</label><select id="model"><option>gemma4:12b</option></select></div>
+        <div id="status" class="status checking" role="status"><span>Vérification…</span></div>
+      </header>
+      <section id="chat" class="chat" aria-live="polite">
+        <div id="offlineHelp" class="offline-help" hidden>
+          <div class="state-icon" aria-hidden="true">↗</div>
+          <div><strong id="offlineTitle">Le moteur local attend Ollama</strong><span id="offlineCopy">Installez ou lancez Ollama, puis ajoutez Gemma. Aster reste disponible pour gérer vos conversations.</span></div>
+          <div class="state-actions"><button id="retryConnection">Tester à nouveau</button><button id="installGuideBtn">Guide d’installation</button></div>
+        </div>
+        <div id="empty" class="empty">
+          <div class="orb"><span>✦</span></div><p class="eyebrow">ASTER LOCAL</p>
+          <h1>Que voulez-vous<br>accomplir aujourd’hui&nbsp;?</h1>
+          <p class="sub">Gemma travaille sur votre machine. Vos conversations y restent aussi.</p>
+          <div class="suggestions">
+            <button data-prompt="Aide-moi à structurer un nouveau projet."><b>Structurer une idée</b><span>Du brouillon au plan d’action</span></button>
+            <button data-prompt="Explique-moi simplement ce dossier et ses fichiers."><b>Comprendre un projet</b><span>Une lecture claire et guidée</span></button>
+            <button data-prompt="Écris une première version claire et concise."><b>Écrire avec moi</b><span>Une base à améliorer ensemble</span></button>
+          </div>
+        </div>
+        <div id="messages" class="messages"></div>
+      </section>
+      <footer class="composer-wrap">
+        <form id="composer" class="composer">
+          <textarea id="prompt" rows="1" placeholder="Écrivez à Aster…" aria-label="Message"></textarea>
+          <div class="composer-bar"><span>Entrée pour envoyer · Maj+Entrée pour une ligne</span><button id="send" class="send" aria-label="Envoyer">↑</button><button id="stop" class="stop" type="button" hidden>■ Arrêter</button></div>
+        </form>
+        <p>Aster peut se tromper. Vérifiez les informations importantes.</p>
+      </footer>
+    </main>
+  </div>
+  <dialog id="settings"><form method="dialog" class="account-center">
+    <aside class="account-nav"><div class="account-brand"><span class="brand-mark">✦</span><div><b>Centre du compte</b><small>Aster Local</small></div></div><nav aria-label="Réglages du compte"><button type="button" class="active" data-settings-tab="account">Compte</button><button type="button" data-settings-tab="users">Utilisateurs</button><button type="button" data-settings-tab="profiles">Profils</button><button type="button" data-settings-tab="devices">Appareils et sessions</button><button type="button" data-settings-tab="security">Sécurité</button><button type="button" data-settings-tab="ai">IA et capacités</button><button type="button" data-settings-tab="network">Réseau</button><button type="button" data-settings-tab="data">Données</button></nav><p>Les contenus privés restent séparés des réglages administratifs.</p></aside>
+    <div class="account-main"><div class="account-topbar"><div><p class="eyebrow">RÉGLAGES</p><h2 id="settingsTitle">Compte</h2></div><button class="icon-btn" aria-label="Fermer">×</button></div><div class="account-scroll">
+      <section class="settings-panel active" data-settings-panel="account"><div class="panel-intro"><span class="section-icon coral">A</span><div><h3>Votre compte Aster</h3><p>Le premier compte est administrateur de cette installation locale.</p></div></div><div class="limit-strip"><span><b id="accountCount">1</b> / <span id="accountLimit">3</span> comptes</span><span>Administrateur local</span></div><label>Adresse du compte<input id="accountEmail" type="email" autocomplete="email" placeholder="vous@exemple.fr"></label><div class="action-row"><button id="logoutSettings" type="button" class="danger-outline">Se déconnecter</button><small>Vous reviendrez à l’écran de connexion. Les données locales restent sur ce PC.</small></div></section>
+      <section class="settings-panel" data-settings-panel="users"><div class="panel-intro"><span class="section-icon blue">U</span><div><h3>Utilisateurs autorisés</h3><p>L’administrateur crée les comptes locaux. Chaque utilisateur reçoit son propre mot de passe et ses profils privés.</p></div></div><div id="adminUsers" class="admin-users"></div><div id="createUserForm" class="admin-create"><label>Identifiant<input id="newUsername" pattern="[a-z0-9._-]{3,64}"></label><label>Mot de passe<input id="newUserPassword" type="password" minlength="12" maxlength="256"></label><label>Premier profil<input id="newUserProfile" maxlength="40" placeholder="Personnel"></label><button id="createUserBtn" class="primary" type="button">Ajouter l’utilisateur</button></div><p id="adminUserState" class="inline-state" role="status"></p></section>
+      <section class="settings-panel" data-settings-panel="profiles"><div class="panel-intro"><span class="section-icon blue">P</span><div><h3>Profils de ce compte</h3><p>Jusqu’à quatre espaces privés. Chacun possède ses propres règles et conversations.</p></div></div><div class="limit-strip"><span><b>1</b> / 4 profils</span><span>Profil principal</span></div><div class="profile-editor"><div class="large-avatar" id="profileAvatarLarge">P</div><div class="settings-grid"><label>Nom du profil<input id="displayName" maxlength="40" placeholder="Profil principal"></label><label>Type<select id="profileRole"><option value="admin">Administrateur</option><option value="personal">Personnel</option><option value="work">Professionnel</option><option value="child">Enfant</option><option value="guest">Invité</option></select></label></div></div><div class="security-row"><div><b>Verrouillage par PIN</b><p>Demandé à l’ouverture de ce profil.</p></div><span class="availability">Prévu dans la prochaine étape</span></div></section>
+      <section class="settings-panel" data-settings-panel="devices"><div class="panel-intro"><span class="section-icon performance">▣</span><div><h3>Appareils et sessions</h3><p>Voyez où votre compte est connecté sans exposer les conversations.</p></div></div><article class="device-card"><span class="device-icon">▤</span><div><b>Ce PC · Windows</b><p>Session actuelle · accès local uniquement</p><small>Dernière activité : maintenant</small></div><span class="current-session">Cet appareil</span></article><div class="empty-session"><b>Aucune autre session à fermer</b><p>Les appareils distants apparaîtront ici lorsqu’ils seront pris en charge.</p></div></section>
+      <section class="settings-panel" data-settings-panel="security"><div class="panel-intro"><span class="section-icon security">◇</span><div><h3>Sécurité du compte</h3><p>Les réglages critiques demandent une nouvelle vérification d’identité.</p></div></div><div class="security-list"><div><span><b>Mot de passe du compte</b><small>Protégé localement par scrypt</small></span><em>Actif</em></div><div><span><b>Double authentification</b><small>Disponible avec le futur accès distant</small></span><em>À venir</em></div><div><span><b>Accès distant</b><small>Désactivé par défaut</small></span><em>Sûr</em></div></div><label>Jeton d’accès distant<input id="token" type="password" autocomplete="off" placeholder="Conservé uniquement pour cette session"></label></section>
+      <section class="settings-panel" data-settings-panel="ai"><div class="panel-intro"><span class="section-icon blue">✦</span><div><h3>Catalogue IA</h3><p>L’administrateur active les modèles, règles et skills. Aucun téléchargement automatique.</p></div></div><h4>Modèles disponibles</h4><div class="catalog-grid model-catalog"><label class="catalog-card featured"><input class="model-toggle" type="checkbox" value="gemma4:12b"><span><b>Gemma 4 12B</b><small>7,6 Go · haute qualité</small></span><em>Recommandé</em></label><label class="catalog-card"><input class="model-toggle" type="checkbox" value="gemma4:e4b"><span><b>Gemma 4 E4B</b><small>Plus léger · plus rapide</small></span><em>Option</em></label></div><input id="allowedModels" type="hidden"><label>Modèle par défaut<select id="customModel"><option value="gemma4:12b">Gemma 4 12B</option><option value="gemma4:e4b">Gemma 4 E4B</option></select></label><h4>Règles du profil</h4><label><select id="rulePreset"><option value="balanced">Équilibré et prudent</option><option value="family">Familial</option><option value="creative">Créatif</option><option value="custom">Personnalisé</option></select><textarea id="profileRules" rows="3" placeholder="Ajoutez les règles propres à ce profil."></textarea></label><h4>Skills autorisées</h4><div class="skill-grid"><label><input class="skill-toggle" type="checkbox" value="writing"> Écriture</label><label><input class="skill-toggle" type="checkbox" value="summary"> Résumé</label><label><input class="skill-toggle" type="checkbox" value="documents"> Documents</label><label><input class="skill-toggle" type="checkbox" value="code"> Code</label></div><input id="allowedSkills" type="hidden"><h4>Capacité de la machine</h4><div class="capacity-grid"><label><input type="radio" name="capacity" value="essential"><span><b>Essentiel</b><small>1 requête · recommandé ici</small></span></label><label><input type="radio" name="capacity" value="balanced"><span><b>Équilibré</b><small>Jusqu’à 2 requêtes</small></span></label><label><input type="radio" name="capacity" value="performance"><span><b>Performance</b><small>Jusqu’à 4 requêtes</small></span></label></div><div class="settings-grid"><label>Limite parallèle<input id="parallelRequests" type="number" min="1" max="8" value="1"></label><label class="check"><input id="capacityOverride" type="checkbox"> Dépasser la recommandation</label></div><p class="capacity-note">Avec Gemma 4 12B sur cette machine, Aster recommande une requête active et met les suivantes en file d’attente.</p></section>
+      <section class="settings-panel" data-settings-panel="network"><div class="panel-intro"><span class="section-icon amber">⌁</span><div><h3>Réseau de l’application</h3><p>Aucun VPN n’est activé par défaut.</p></div></div><div class="settings-grid"><label>Route réseau<select id="networkMode"><option value="direct">Directe, sans VPN</option><option value="proton">Proton VPN installé par l’utilisateur</option><option value="system">VPN déjà actif sur la machine</option><option value="custom">Mon propre VPN ou proxy</option><option value="tor">Tor via SOCKS5</option></select></label><label>Adresse personnalisée<input id="proxyUrl" placeholder="socks5://127.0.0.1:9050"></label></div><p class="network-warning"><strong>Option, jamais obligation.</strong> Ces choix sont préparatoires et ne routent pas encore le trafic. Aster ne promet jamais une navigation sans trace.</p></section>
+      <section class="settings-panel" data-settings-panel="data"><div class="panel-intro"><span class="section-icon data">↧</span><div><h3>Données locales</h3><p>Contrôlez l’affichage, les sauvegardes et l’espace utilisé.</p></div></div><label class="check"><input id="compactMode" type="checkbox"> Affichage compact des messages</label><div class="storage-card"><div><b>Données Aster</b><p>Conversations et réglages locaux</p></div><strong>Très léger</strong></div><div class="data-actions"><button id="exportData" type="button">Exporter mes données</button><button id="importData" type="button">Importer un JSON</button><input id="importFile" type="file" accept="application/json" hidden></div></section>
+    </div><div class="account-footer"><p id="settingsSaveState">Les modifications restent sur cet appareil.</p><button id="saveSettings" class="primary">Enregistrer</button></div></div>
+  </form></dialog>
+  <dialog id="onboarding" class="onboarding"><div class="onboarding-shell">
+    <div class="dialog-head"><div><p class="eyebrow">CONFIGURATION ADMINISTRATEUR</p><h2>Préparer Aster pour ses utilisateurs</h2><p>Cette étape est obligatoire. Choisissez combien de personnes et de profils utiliseront ce PC.</p></div></div>
+    <fieldset class="formula-picker"><legend>Organisation de l’installation</legend><label><input type="radio" name="formula" value="solo" checked><span><b>Personnel</b><small>1 utilisateur avec jusqu’à 4 profils</small></span><em>Recommandé</em></label><label><input type="radio" name="formula" value="family"><span><b>Foyer</b><small>Jusqu’à 3 utilisateurs et 4 profils chacun</small></span></label><label><input type="radio" name="formula" value="custom"><span><b>Personnalisé</b><small>Commencer petit et ajouter les utilisateurs plus tard</small></span></label></fieldset>
+    <ol class="setup-steps">
+      <li class="done"><span>1</span><div><b>Aster est lancé</b><p>Le service local répond sur cette machine.</p></div></li>
+      <li><span>2</span><div><b>Connectez votre compte, puis choisissez un profil</b><p>La version finale exigera un compte Aster. Chaque compte pourra contenir jusqu’à quatre profils privés avec PIN optionnel.</p><button id="openProfileSetup">Préparer le compte et le profil</button></div></li>
+      <li><span>3</span><div><b>Ajoutez un moteur, maintenant ou plus tard</b><p>Installez Ollama depuis sa source officielle puis exécutez :</p><code>ollama pull gemma4:12b</code><small>Environ 7,6 Go. Aucun modèle n’est téléchargé automatiquement.</small></div></li>
+      <li><span>4</span><div><b>Gardez l’accès local</b><p>Le mobile, le web distant, Tor et les VPN restent désactivés jusqu’à une configuration authentifiée.</p></div></li>
+    </ol>
+    <div class="onboarding-footer"><button id="finishOnboarding" class="primary">Enregistrer et continuer</button></div>
+  </div></dialog>
+  <script>
+    fetch('/api/auth/status',{credentials:'same-origin'}).then(r=>r.json()).then(auth=>{
+      if(auth.authenticated)return;
+      document.getElementById('authLoading').hidden=true;
+      document.getElementById(auth.configured?'loginForm':'setupForm').hidden=false;
+    }).catch(()=>{
+      document.querySelector('#authLoading p').textContent='Le service local ne répond pas. Relancez Aster puis rechargez cette page.';
+    });
+  </script>
+  <script type="module" src="/app.js?v=12"></script>
+</body></html>

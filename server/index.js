@@ -1,0 +1,375 @@
+import http from 'node:http';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+import { dirname, extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = fileURLToPath(new URL('../web', import.meta.url));
+const host = process.env.HOST || '127.0.0.1';
+const port = Number(process.env.PORT || 4317);
+const ollama = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+const remoteToken = process.env.ASTER_REMOTE_TOKEN || '';
+const scrypt = promisify(scryptCallback);
+const dataDir = process.env.ASTER_DATA_DIR || fileURLToPath(new URL('../data', import.meta.url));
+const conversationFile = process.env.ASTER_DATA_DIR
+  ? join(process.env.ASTER_DATA_DIR, 'conversations.json')
+  : fileURLToPath(new URL('../data/conversations.json', import.meta.url));
+const authFile = join(dataDir, 'auth.json');
+const sessions = new Map();
+const loginAttempts = new Map();
+const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
+const SCRYPT_OPTIONS = { N:131072, r:8, p:1, maxmem:256 * 1024 * 1024 };
+const MAX_CONVERSATIONS = 500;
+const MAX_MESSAGES = 200;
+const MAX_CONTENT = 100_000;
+const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json', '.svg':'image/svg+xml', '.webmanifest':'application/manifest+json' };
+let mutation = Promise.resolve();
+
+function json(res, status, body) {
+  res.writeHead(status, { ...securityHeaders(), 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+function securityHeaders() {
+  return { 'x-content-type-options':'nosniff', 'x-frame-options':'DENY', 'referrer-policy':'no-referrer', 'permissions-policy':'camera=(), microphone=(), geolocation=()', 'content-security-policy':"default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" };
+}
+
+function checkLoginRate(req) {
+  const key = req.socket.remoteAddress || 'unknown'; const now = Date.now();
+  const recent = (loginAttempts.get(key) || []).filter(time => now - time < 10 * 60 * 1000);
+  if (recent.length >= 8) throw Object.assign(new Error('Trop de tentatives. Réessayez dans quelques minutes.'), { status:429 });
+  recent.push(now); loginAttempts.set(key, recent);
+}
+
+function cookie(req, name) {
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const [key, ...value] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(value.join('='));
+  }
+  return '';
+}
+
+function sessionFor(req) {
+  if (remoteToken && req.headers.authorization === `Bearer ${remoteToken}`) return { userId:'remote', profileId:'remote', role:'admin' };
+  const token = cookie(req, 'aster_session');
+  const session = sessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) { sessions.delete(token); return null; }
+  return session;
+}
+
+function sessionCookie(token, maxAge = Math.floor(SESSION_MS / 1000)) {
+  const secure = host !== '127.0.0.1' && host !== 'localhost' ? '; Secure' : '';
+  return `aster_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
+}
+
+function isLoopback(req) {
+  const address = req.socket.remoteAddress || '';
+  return address === '127.0.0.1' || address === '::1' || address.startsWith('::ffff:127.');
+}
+
+async function loadAuth() {
+  try {
+    const value = JSON.parse(await readFile(authFile, 'utf8'));
+    if (!value || !Array.isArray(value.users)) throw new Error('invalid auth store');
+    return value;
+  } catch (error) {
+    if (error.code === 'ENOENT') return { version:1, installationMode:null, users:[] };
+    throw Object.assign(new Error("Le stockage d'authentification est illisible."), { status:500 });
+  }
+}
+
+async function saveAuth(value) {
+  await mkdir(dataDir, { recursive:true });
+  const temporary = `${authFile}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding:'utf8', flag:'wx', mode:0o600 });
+  await rename(temporary, authFile);
+}
+
+function validateCredentials(input, setup = false) {
+  if (!input || typeof input !== 'object') throw Object.assign(new Error('Identifiants invalides.'), { status:400 });
+  const username = String(input.username || '').trim().toLowerCase();
+  const password = String(input.password || '');
+  if (!/^[a-z0-9._-]{3,64}$/.test(username)) throw Object.assign(new Error("Nom d'utilisateur invalide."), { status:400 });
+  if (password.length < 12 || password.length > 256) throw Object.assign(new Error('Le mot de passe doit contenir entre 12 et 256 caractères.'), { status:400 });
+  const profileName = setup ? String(input.profileName || 'Personnel').trim().slice(0, 80) : '';
+  if (setup && !profileName) throw Object.assign(new Error('Nom de profil invalide.'), { status:400 });
+  return { username, password, profileName, profileId:typeof input.profileId === 'string' ? input.profileId : '' };
+}
+
+async function passwordHash(password, salt = randomBytes(16)) {
+  const derived = await scrypt(password, salt, 64, SCRYPT_OPTIONS);
+  return { salt:salt.toString('base64'), hash:Buffer.from(derived).toString('base64') };
+}
+
+async function passwordMatches(password, user) {
+  const expected = Buffer.from(user.passwordHash, 'base64');
+  const actual = Buffer.from(await scrypt(password, Buffer.from(user.passwordSalt, 'base64'), expected.length, SCRYPT_OPTIONS));
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function startSession(res, user, profileId) {
+  const token = randomBytes(32).toString('base64url');
+  const session = { userId:user.id, role:user.role, profileId, expiresAt:Date.now() + SESSION_MS };
+  sessions.set(token, session);
+  res.setHeader('set-cookie', sessionCookie(token));
+  return session;
+}
+
+async function body(req, limit = 2_000_000) {
+  const chunks = []; let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw Object.assign(new Error('Payload too large'), { status: 413 });
+    chunks.push(chunk);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
+  catch { throw Object.assign(new Error('JSON invalide.'), { status:400 }); }
+}
+
+async function loadConversations() {
+  try {
+    const value = JSON.parse(await readFile(conversationFile, 'utf8'));
+    if (!Array.isArray(value)) throw new Error('invalid store');
+    return value;
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw Object.assign(new Error('Le stockage des conversations est illisible.'), { status:500 });
+  }
+}
+
+async function saveConversations(conversations) {
+  await mkdir(dirname(conversationFile), { recursive:true });
+  const temporary = `${conversationFile}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(conversations, null, 2)}\n`, { encoding:'utf8', flag:'wx' });
+  await rename(temporary, conversationFile);
+}
+
+function validateConversation(input, partial = false) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw Object.assign(new Error('Conversation invalide.'), { status:400 });
+  const output = {};
+  if (!partial || 'title' in input) {
+    if (typeof input.title !== 'string' || !input.title.trim() || input.title.trim().length > 200) throw Object.assign(new Error('Le titre doit contenir entre 1 et 200 caractères.'), { status:400 });
+    output.title = input.title.trim();
+  }
+  if (!partial || 'messages' in input) {
+    if (!Array.isArray(input.messages) || input.messages.length > MAX_MESSAGES) throw Object.assign(new Error(`Maximum ${MAX_MESSAGES} messages.`), { status:400 });
+    output.messages = input.messages.map((message) => {
+      if (!message || !['system','user','assistant','tool'].includes(message.role) || typeof message.content !== 'string' || message.content.length > MAX_CONTENT) throw Object.assign(new Error('Message invalide.'), { status:400 });
+      return { role:message.role, content:message.content };
+    });
+  }
+  if ('model' in input) {
+    if (typeof input.model !== 'string' || input.model.length > 120) throw Object.assign(new Error('Modèle invalide.'), { status:400 });
+    output.model = input.model;
+  }
+  if (partial && !Object.keys(output).length) throw Object.assign(new Error('Aucun champ modifiable fourni.'), { status:400 });
+  return output;
+}
+
+function mutateConversations(operation) {
+  const next = mutation.then(async () => {
+    const conversations = await loadConversations();
+    const result = await operation(conversations);
+    await saveConversations(conversations);
+    return result;
+  });
+  mutation = next.catch(() => {});
+  return next;
+}
+
+async function api(req, res, url) {
+  if (url.pathname === '/api/auth/setup' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Configuration administrateur autorisée uniquement en local.' });
+    const auth = await loadAuth();
+    if (auth.users.length) return json(res, 409, { error:'Un administrateur existe déjà.' });
+    const input = validateCredentials(await body(req), true);
+    const password = await passwordHash(input.password);
+    const profile = { id:randomUUID(), name:input.profileName };
+    const user = { id:randomUUID(), username:input.username, role:'admin', passwordSalt:password.salt, passwordHash:password.hash, profiles:[profile], createdAt:new Date().toISOString() };
+    auth.users.push(user); await saveAuth(auth);
+    startSession(res, user, profile.id);
+    return json(res, 201, { user:{ id:user.id, username:user.username, role:user.role }, profiles:user.profiles, profile });
+  }
+  if (url.pathname === '/api/auth/login' && req.method === 'POST') {
+    checkLoginRate(req);
+    const input = validateCredentials(await body(req));
+    const auth = await loadAuth();
+    const user = auth.users.find(item => item.username === input.username);
+    if (!user || !(await passwordMatches(input.password, user))) return json(res, 401, { error:'Identifiants incorrects.' });
+    loginAttempts.delete(req.socket.remoteAddress || 'unknown');
+    const profile = user.profiles.find(item => item.id === input.profileId) || user.profiles[0];
+    startSession(res, user, profile.id);
+    return json(res, 200, { user:{ id:user.id, username:user.username, role:user.role }, profiles:user.profiles, profile });
+  }
+  if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
+    sessions.delete(cookie(req, 'aster_session')); res.setHeader('set-cookie', sessionCookie('', 0));
+    return json(res, 200, { ok:true });
+  }
+  if (url.pathname === '/api/auth/status' && req.method === 'GET') {
+    const auth = await loadAuth(); const session = sessionFor(req);
+    if (!session) return json(res, 200, { configured:auth.users.length > 0, authenticated:false });
+    if (session.userId === 'remote') return json(res, 200, { configured:auth.users.length > 0, authenticated:true, remote:true, profile:{ id:'remote', name:'Remote' } });
+    const user = auth.users.find(item => item.id === session.userId); const profile = user?.profiles.find(item => item.id === session.profileId);
+    if (!user || !profile) return json(res, 200, { configured:auth.users.length > 0, authenticated:false });
+    return json(res, 200, { configured:true, installationConfigured:!!auth.installationMode, authenticated:true, user:{ id:user.id, username:user.username, role:user.role }, profiles:user.profiles, profile });
+  }
+  let session = sessionFor(req);
+  if (!session) return json(res, 401, { error:'Authentification requise.' });
+  if (url.pathname === '/api/auth/profile' && req.method === 'POST') {
+    if (session.userId === 'remote') return json(res, 400, { error:'Profil distant fixe.' });
+    const auth = await loadAuth(); const user = auth.users.find(item => item.id === session.userId);
+    const profileInput = await body(req);
+    const profile = user?.profiles.find(item => item.id === String(profileInput.profileId || ''));
+    if (!profile) return json(res, 404, { error:'Profil introuvable.' });
+    session.profileId = profile.id;
+    return json(res, 200, { profile });
+  }
+  if (url.pathname === '/api/admin/profiles' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const auth = await loadAuth(); const user = auth.users.find(item => item.id === session.userId);
+    if (!user || user.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    if (user.profiles.length >= 4) return json(res, 409, { error:'Limite de quatre profils atteinte.' });
+    const input = await body(req); const name = String(input.name || '').trim();
+    if (!name || name.length > 40) return json(res, 400, { error:'Nom de profil invalide.' });
+    const profile = { id:randomUUID(), name }; user.profiles.push(profile); await saveAuth(auth);
+    return json(res, 201, { profile, profiles:user.profiles });
+  }
+  if (url.pathname === '/api/admin/overview' && req.method === 'GET') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    return json(res, 200, { installationMode:auth.installationMode, maxUsers:auth.installationMode === 'solo' ? 1 : 3, users:auth.users.map(user => ({ id:user.id, username:user.username, role:user.role, profiles:user.profiles })) });
+  }
+  if (url.pathname === '/api/admin/config' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    const input = await body(req); const installationMode = String(input.installationMode || '');
+    if (!['solo','family','custom'].includes(installationMode)) return json(res, 400, { error:'Configuration invalide.' });
+    if (installationMode === 'solo' && auth.users.length > 1) return json(res, 409, { error:'Supprimez les comptes supplémentaires avant de choisir Personnel.' });
+    auth.installationMode = installationMode; await saveAuth(auth);
+    return json(res, 200, { installationMode, maxUsers:installationMode === 'solo' ? 1 : 3 });
+  }
+  if (url.pathname === '/api/admin/users' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    if (!auth.installationMode) return json(res, 409, { error:'Terminez d’abord la configuration administrateur.' });
+    const maxUsers = auth.installationMode === 'solo' ? 1 : 3;
+    if (auth.users.length >= maxUsers) return json(res, 409, { error:`Limite de ${maxUsers} compte(s) atteinte.` });
+    const input = validateCredentials(await body(req), true);
+    if (auth.users.some(item => item.username === input.username)) return json(res, 409, { error:'Cet identifiant existe déjà.' });
+    const password = await passwordHash(input.password); const profile = { id:randomUUID(), name:input.profileName };
+    const user = { id:randomUUID(), username:input.username, role:'user', passwordSalt:password.salt, passwordHash:password.hash, profiles:[profile], createdAt:new Date().toISOString() };
+    auth.users.push(user); await saveAuth(auth);
+    return json(res, 201, { user:{ id:user.id, username:user.username, role:user.role, profiles:user.profiles } });
+  }
+  const adminProfileMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles$/i);
+  if (adminProfileMatch && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    const user = auth.users.find(item => item.id === adminProfileMatch[1]);
+    if (!user) return json(res, 404, { error:'Compte introuvable.' });
+    if (user.profiles.length >= 4) return json(res, 409, { error:'Limite de quatre profils atteinte.' });
+    const input = await body(req); const name = String(input.name || '').trim();
+    if (!name || name.length > 40) return json(res, 400, { error:'Nom de profil invalide.' });
+    const profile = { id:randomUUID(), name }; user.profiles.push(profile); await saveAuth(auth);
+    return json(res, 201, { profile, profiles:user.profiles });
+  }
+  const conversationMatch = url.pathname.match(/^\/api\/conversations\/([0-9a-f-]{36})$/i);
+  if (url.pathname === '/api/conversations' && req.method === 'GET') {
+    const conversations = (await loadConversations()).filter(item => item.profileId === session.profileId);
+    return json(res, 200, { conversations:conversations.map(({ messages, ...item }) => ({ ...item, messageCount:messages.length })) });
+  }
+  if (url.pathname === '/api/conversations' && req.method === 'POST') {
+    const input = validateConversation(await body(req));
+    const conversation = await mutateConversations((conversations) => {
+      if (conversations.filter(item => item.profileId === session.profileId).length >= MAX_CONVERSATIONS) throw Object.assign(new Error(`Maximum ${MAX_CONVERSATIONS} conversations.`), { status:409 });
+      const now = new Date().toISOString();
+      const created = { id:randomUUID(), profileId:session.profileId, ...input, model:input.model || 'gemma4:12b', createdAt:now, updatedAt:now };
+      conversations.unshift(created);
+      return created;
+    });
+    return json(res, 201, conversation);
+  }
+  if (conversationMatch && req.method === 'GET') {
+    const conversation = (await loadConversations()).find(item => item.id === conversationMatch[1] && item.profileId === session.profileId);
+    return conversation ? json(res, 200, conversation) : json(res, 404, { error:'Conversation introuvable.' });
+  }
+  if (conversationMatch && (req.method === 'PATCH' || req.method === 'PUT')) {
+    const input = validateConversation(await body(req), req.method === 'PATCH');
+    const conversation = await mutateConversations((conversations) => {
+      const index = conversations.findIndex(item => item.id === conversationMatch[1] && item.profileId === session.profileId);
+      if (index < 0) throw Object.assign(new Error('Conversation introuvable.'), { status:404 });
+      conversations[index] = { ...conversations[index], ...input, updatedAt:new Date().toISOString() };
+      return conversations[index];
+    });
+    return json(res, 200, conversation);
+  }
+  if (conversationMatch && req.method === 'DELETE') {
+    await mutateConversations((conversations) => {
+      const index = conversations.findIndex(item => item.id === conversationMatch[1] && item.profileId === session.profileId);
+      if (index < 0) throw Object.assign(new Error('Conversation introuvable.'), { status:404 });
+      conversations.splice(index, 1);
+    });
+    res.writeHead(204, { 'cache-control':'no-store' }); res.end(); return;
+  }
+  if (url.pathname === '/api/health') {
+    try {
+      const r = await fetch(`${ollama}/api/tags`, { signal: AbortSignal.timeout(1800) });
+      return json(res, 200, { ok:true, ollama:r.ok, local: host === '127.0.0.1' || host === 'localhost' });
+    } catch { return json(res, 200, { ok:true, ollama:false, local:true }); }
+  }
+  if (url.pathname === '/api/models') {
+    try {
+      const r = await fetch(`${ollama}/api/tags`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw new Error('Ollama unavailable');
+      const data = await r.json();
+      return json(res, 200, { models:(data.models || []).map(m => ({ name:m.name, size:m.size })) });
+    } catch { return json(res, 503, { error:'Ollama est hors ligne.', models:[] }); }
+  }
+  if (url.pathname === '/api/chat' && req.method === 'POST') {
+    const input = await body(req);
+    const model = String(input.model || 'gemma4:12b').slice(0, 120);
+    const messages = Array.isArray(input.messages) ? input.messages.slice(-80).map(m => ({ role:m.role, content:String(m.content || '').slice(0, 100_000) })) : [];
+    const upstream = await fetch(`${ollama}/api/chat`, {
+      method:'POST', headers:{ 'content-type':'application/json' },
+      body:JSON.stringify({ model, messages, stream:true }), signal:req.signal
+    });
+    if (!upstream.ok || !upstream.body) return json(res, upstream.status, { error:await upstream.text() });
+    res.writeHead(200, { ...securityHeaders(), 'content-type':'application/x-ndjson', 'cache-control':'no-store' });
+    const reader = upstream.body.getReader();
+    try { while (true) { const {done,value}=await reader.read(); if(done) break; if(!res.write(value)) await new Promise(r => res.once('drain',r)); } }
+    finally { reader.releaseLock(); res.end(); }
+    return;
+  }
+  json(res, 404, { error:'Route inconnue.' });
+}
+
+async function staticFile(req, res, url) {
+  const requested = url.pathname === '/' ? '/index.html' : url.pathname;
+  const safe = normalize(requested).replace(/^(\.\.[/\\])+/, '');
+  const path = join(root, safe);
+  if (!path.startsWith(root)) return json(res, 403, { error:'Accès refusé.' });
+  try {
+    if (!(await stat(path)).isFile()) throw new Error('not file');
+    const data = await readFile(path);
+    res.writeHead(200, { ...securityHeaders(), 'content-type':types[extname(path)] || 'application/octet-stream', 'cache-control':extname(path)==='.html'?'no-cache':'public, max-age=3600' });
+    res.end(data);
+  } catch { json(res, 404, { error:'Introuvable.' }); }
+}
+
+const server = http.createServer(async (req,res) => {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    if (!['GET','HEAD','OPTIONS'].includes(req.method || 'GET') && req.headers.origin) {
+      const origin = new URL(req.headers.origin); const expected = String(req.headers.host || '');
+      if (origin.host !== expected) return json(res, 403, { error:'Origine refusée.' });
+    }
+    if (url.pathname.startsWith('/api/')) await api(req,res,url); else await staticFile(req,res,url);
+  } catch (e) { if (!res.headersSent) json(res, e.status || 500, { error:e.message || 'Erreur interne.' }); else res.end(); }
+});
+server.listen(port, host, () => console.log(`Aster Local → http://${host}:${port}`));

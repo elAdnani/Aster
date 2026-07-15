@@ -1,0 +1,14 @@
+{
+  "name": "aster-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A private, local-first AI workspace for Gemma and Ollama.",
+  "scripts": {
+    "dev": "node --watch server/index.js",
+    "start": "node server/index.js",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=20" },
+  "license": "Apache-2.0"
+}
