@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,8 +61,19 @@ test('persists conversations through the REST lifecycle', async () => {
     method:'PATCH', headers:{ ...auth, 'content-type':'application/json' }, body:JSON.stringify({ title:'Titre modifié' })
   });
   assert.equal((await updated.json()).title, 'Titre modifié');
-  const stored = JSON.parse(await readFile(join(dataDir, 'conversations.json'), 'utf8'));
-  assert.equal(stored[0].title, 'Titre modifié');
+  const storedText = await readFile(join(dataDir, 'conversations.json'), 'utf8');
+  const stored = JSON.parse(storedText);
+  assert.equal(stored[0].encrypted.version, 1);
+  assert.equal(stored[0].title, undefined);
+  assert.doesNotMatch(storedText, /Titre modifié|Bonjour/);
+  assert.equal((await readFile(join(dataDir, 'storage.key'))).length, 32);
+
+  const originalData = stored[0].encrypted.data;
+  stored[0].encrypted.data = `${originalData[0] === 'A' ? 'B' : 'A'}${originalData.slice(1)}`;
+  await writeFile(join(dataDir, 'conversations.json'), JSON.stringify(stored));
+  const tampered = await fetch(`http://127.0.0.1:${port}/api/conversations/${created.id}`, { headers:auth });
+  assert.equal(tampered.status, 500);
+  await writeFile(join(dataDir, 'conversations.json'), storedText);
 
   const fetched = await fetch(`http://127.0.0.1:${port}/api/conversations/${created.id}`, { headers:auth });
   assert.equal((await fetched.json()).messages[0].content, 'Bonjour');

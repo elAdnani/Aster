@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,7 @@ const conversationFile = process.env.ASTER_DATA_DIR
   ? join(process.env.ASTER_DATA_DIR, 'conversations.json')
   : fileURLToPath(new URL('../data/conversations.json', import.meta.url));
 const authFile = join(dataDir, 'auth.json');
+const storageKeyFile = join(dataDir, 'storage.key');
 const sessions = new Map();
 const loginAttempts = new Map();
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -26,6 +27,7 @@ const MAX_CONTENT = 100_000;
 const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json', '.svg':'image/svg+xml', '.webmanifest':'application/manifest+json' };
 let mutation = Promise.resolve();
 let authMutation = Promise.resolve();
+let storageKeyPromise;
 
 function json(res, status, body) {
   res.writeHead(status, { ...securityHeaders(), 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' });
@@ -121,6 +123,56 @@ async function passwordMatches(password, user) {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+async function storageMasterKey() {
+  if (!storageKeyPromise) storageKeyPromise = (async () => {
+    try {
+      const key = await readFile(storageKeyFile);
+      if (key.length !== 32) throw new Error('invalid storage key');
+      return key;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw Object.assign(new Error('La clé de stockage locale est illisible.'), { status:500 });
+      await mkdir(dataDir, { recursive:true });
+      const key = randomBytes(32);
+      try { await writeFile(storageKeyFile, key, { flag:'wx', mode:0o600 }); return key; }
+      catch (writeError) {
+        if (writeError.code !== 'EEXIST') throw writeError;
+        const existing = await readFile(storageKeyFile);
+        if (existing.length !== 32) throw new Error('invalid storage key');
+        return existing;
+      }
+    }
+  })();
+  return storageKeyPromise;
+}
+
+async function conversationKey(profileId) {
+  return Buffer.from(hkdfSync('sha256', await storageMasterKey(), Buffer.from(profileId), Buffer.from('aster-conversation-v1'), 32));
+}
+
+async function encryptConversation(conversation) {
+  const iv = randomBytes(12); const key = await conversationKey(conversation.profileId);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(Buffer.from(`${conversation.id}:${conversation.profileId}`));
+  const payload = Buffer.from(JSON.stringify({ title:conversation.title, messages:conversation.messages, model:conversation.model }), 'utf8');
+  const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
+  return { id:conversation.id, profileId:conversation.profileId, createdAt:conversation.createdAt, updatedAt:conversation.updatedAt, encrypted:{ version:1, iv:iv.toString('base64'), tag:cipher.getAuthTag().toString('base64'), data:encrypted.toString('base64') } };
+}
+
+async function decryptConversation(record) {
+  if (!record.encrypted) return record;
+  try {
+    const key = await conversationKey(record.profileId); const iv = Buffer.from(record.encrypted.iv, 'base64');
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAAD(Buffer.from(`${record.id}:${record.profileId}`));
+    decipher.setAuthTag(Buffer.from(record.encrypted.tag, 'base64'));
+    const decrypted = Buffer.concat([decipher.update(Buffer.from(record.encrypted.data, 'base64')), decipher.final()]);
+    const payload = JSON.parse(decrypted.toString('utf8'));
+    return { id:record.id, profileId:record.profileId, ...payload, createdAt:record.createdAt, updatedAt:record.updatedAt };
+  } catch {
+    throw Object.assign(new Error('Une conversation chiffrée est illisible ou a été modifiée.'), { status:500 });
+  }
+}
+
 function startSession(res, user, profileId) {
   const token = randomBytes(32).toString('base64url');
   const session = { userId:user.id, role:user.role, profileId, expiresAt:Date.now() + SESSION_MS };
@@ -144,7 +196,7 @@ async function loadConversations() {
   try {
     const value = JSON.parse(await readFile(conversationFile, 'utf8'));
     if (!Array.isArray(value)) throw new Error('invalid store');
-    return value;
+    return Promise.all(value.map(decryptConversation));
   } catch (error) {
     if (error.code === 'ENOENT') return [];
     throw Object.assign(new Error('Le stockage des conversations est illisible.'), { status:500 });
@@ -154,7 +206,8 @@ async function loadConversations() {
 async function saveConversations(conversations) {
   await mkdir(dirname(conversationFile), { recursive:true });
   const temporary = `${conversationFile}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(conversations, null, 2)}\n`, { encoding:'utf8', flag:'wx' });
+  const encrypted = await Promise.all(conversations.map(encryptConversation));
+  await writeFile(temporary, `${JSON.stringify(encrypted, null, 2)}\n`, { encoding:'utf8', flag:'wx', mode:0o600 });
   await rename(temporary, conversationFile);
 }
 
