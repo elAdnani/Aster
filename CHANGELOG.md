@@ -14,6 +14,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - File d’inférence FIFO et parallélisme indépendant par profil.
 - Suspension, réactivation et suppression protégée des comptes et profils avec révocation des sessions et nettoyage des conversations.
 - Sauvegarde portable chiffrée par phrase secrète et restauration locale avec validation intégrale et révocation de toutes les sessions.
+- Projets persistants chiffrés par profil, déplacement des conversations et recherche serveur isolée.
 - CI Node 20/22/24, CodeQL et processus de publication.
 
 ### Sécurité
@@ -28,7 +29,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 
 - Accès distant non prêt pour Internet public.
 - Clé de chiffrement stockée dans le même compte système que les données.
-- Skills, VPN/Tor et projets persistants encore incomplets.
+- Skills, VPN/Tor, pièces jointes et planification persistante encore incomplets.
 
 ## [0.1.0-alpha.1] - 2026-07-15
 

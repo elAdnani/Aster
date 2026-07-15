@@ -17,6 +17,7 @@ const conversationFile = process.env.ASTER_DATA_DIR
   : fileURLToPath(new URL('../data/conversations.json', import.meta.url));
 const authFile = join(dataDir, 'auth.json');
 const storageKeyFile = join(dataDir, 'storage.key');
+const projectFile = join(dataDir, 'projects.json');
 const sessions = new Map();
 const loginAttempts = new Map();
 const pinAttempts = new Map();
@@ -29,6 +30,7 @@ const MAX_CONTENT = 100_000;
 const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json', '.svg':'image/svg+xml', '.webmanifest':'application/manifest+json' };
 let mutation = Promise.resolve();
 let authMutation = Promise.resolve();
+let projectMutation = Promise.resolve();
 let storageKeyPromise;
 
 function json(res, status, body) {
@@ -203,11 +205,15 @@ async function conversationKey(profileId) {
   return Buffer.from(hkdfSync('sha256', await storageMasterKey(), Buffer.from(profileId), Buffer.from('aster-conversation-v1'), 32));
 }
 
+async function projectKey(profileId) {
+  return Buffer.from(hkdfSync('sha256', await storageMasterKey(), Buffer.from(profileId), Buffer.from('aster-project-v1'), 32));
+}
+
 async function encryptConversation(conversation) {
   const iv = randomBytes(12); const key = await conversationKey(conversation.profileId);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   cipher.setAAD(Buffer.from(`${conversation.id}:${conversation.profileId}`));
-  const payload = Buffer.from(JSON.stringify({ title:conversation.title, messages:conversation.messages, model:conversation.model }), 'utf8');
+  const payload = Buffer.from(JSON.stringify({ title:conversation.title, messages:conversation.messages, model:conversation.model, projectId:conversation.projectId || null }), 'utf8');
   const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
   return { id:conversation.id, profileId:conversation.profileId, createdAt:conversation.createdAt, updatedAt:conversation.updatedAt, encrypted:{ version:1, iv:iv.toString('base64'), tag:cipher.getAuthTag().toString('base64'), data:encrypted.toString('base64') } };
 }
@@ -265,6 +271,46 @@ async function saveConversations(conversations) {
   await rename(temporary, conversationFile);
 }
 
+async function loadProjects() {
+  try {
+    const records = JSON.parse(await readFile(projectFile, 'utf8'));
+    if (!Array.isArray(records)) throw new Error('invalid store');
+    return await Promise.all(records.map(async record => {
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', await projectKey(record.profileId), Buffer.from(record.encrypted.iv, 'base64'));
+        decipher.setAAD(Buffer.from(`${record.id}:${record.profileId}`)); decipher.setAuthTag(Buffer.from(record.encrypted.tag, 'base64'));
+        const payload = JSON.parse(Buffer.concat([decipher.update(Buffer.from(record.encrypted.data, 'base64')), decipher.final()]).toString('utf8'));
+        return { id:record.id, profileId:record.profileId, name:payload.name, createdAt:record.createdAt, updatedAt:record.updatedAt };
+      } catch { throw Object.assign(new Error('Un projet chiffré est illisible ou a été modifié.'), { status:500 }); }
+    }));
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    if (error.status) throw error;
+    throw Object.assign(new Error('Le stockage des projets est illisible.'), { status:500 });
+  }
+}
+
+async function saveProjects(projects) {
+  await mkdir(dirname(projectFile), { recursive:true }); const temporary = `${projectFile}.${process.pid}.${randomUUID()}.tmp`;
+  const records = await Promise.all(projects.map(async project => {
+    const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', await projectKey(project.profileId), iv);
+    cipher.setAAD(Buffer.from(`${project.id}:${project.profileId}`)); const encrypted = Buffer.concat([cipher.update(Buffer.from(JSON.stringify({ name:project.name }), 'utf8')), cipher.final()]);
+    return { id:project.id, profileId:project.profileId, createdAt:project.createdAt, updatedAt:project.updatedAt, encrypted:{ version:1, iv:iv.toString('base64'), tag:cipher.getAuthTag().toString('base64'), data:encrypted.toString('base64') } };
+  }));
+  await writeFile(temporary, `${JSON.stringify(records, null, 2)}\n`, { encoding:'utf8', flag:'wx', mode:0o600 }); await rename(temporary, projectFile);
+}
+
+function mutateProjects(operation) {
+  const next = projectMutation.then(async () => { const projects = await loadProjects(); const result = await operation(projects); await saveProjects(projects); return result; });
+  projectMutation = next.catch(() => {}); return next;
+}
+
+function projectName(input) {
+  const name = String(input?.name || '').trim();
+  if (!name || name.length > 80) throw Object.assign(new Error('Le nom du projet doit contenir entre 1 et 80 caractères.'), { status:400 });
+  return name;
+}
+
 function validateConversation(input, partial = false) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw Object.assign(new Error('Conversation invalide.'), { status:400 });
   const output = {};
@@ -282,6 +328,10 @@ function validateConversation(input, partial = false) {
   if ('model' in input) {
     if (typeof input.model !== 'string' || input.model.length > 120) throw Object.assign(new Error('Modèle invalide.'), { status:400 });
     output.model = input.model;
+  }
+  if ('projectId' in input) {
+    if (input.projectId !== null && !/^[0-9a-f-]{36}$/i.test(String(input.projectId))) throw Object.assign(new Error('Projet invalide.'), { status:400 });
+    output.projectId = input.projectId === null ? null : String(input.projectId);
   }
   if (partial && !Object.keys(output).length) throw Object.assign(new Error('Aucun champ modifiable fourni.'), { status:400 });
   return output;
@@ -310,15 +360,20 @@ function validateBackupData(data) {
   if (administrators !== 1) throw new Error('La sauvegarde doit contenir un administrateur unique.');
   if (data.auth.installationMode === 'solo' && data.auth.users.length !== 1) throw new Error('Mode d’installation incohérent.');
   const conversationProfiles = new Set([...profileIds, 'remote']);
+  const projectIds = new Set(); const projects = (Array.isArray(data.projects) ? data.projects : []).map(project => {
+    if (!project || !/^[0-9a-f-]{36}$/i.test(project.id) || projectIds.has(project.id) || !conversationProfiles.has(project.profileId) || typeof project.name !== 'string' || !project.name.trim() || project.name.length > 80 || typeof project.createdAt !== 'string' || typeof project.updatedAt !== 'string') throw new Error('Projet sauvegardé invalide.');
+    projectIds.add(project.id); return { id:project.id, profileId:project.profileId, name:project.name.trim(), createdAt:project.createdAt, updatedAt:project.updatedAt };
+  });
   if (data.conversations.length > conversationProfiles.size * MAX_CONVERSATIONS) throw new Error('Trop de conversations dans la sauvegarde.');
   const counts = new Map(); const ids = new Set(); const conversations = data.conversations.map(item => {
     if (!item || !/^[0-9a-f-]{36}$/i.test(item.id) || ids.has(item.id) || !conversationProfiles.has(item.profileId)) throw new Error('Conversation sauvegardée invalide.');
     ids.add(item.id); counts.set(item.profileId, (counts.get(item.profileId) || 0) + 1);
     if (counts.get(item.profileId) > MAX_CONVERSATIONS) throw new Error('Limite de conversations dépassée dans la sauvegarde.');
     if (typeof item.createdAt !== 'string' || item.createdAt.length > 40 || typeof item.updatedAt !== 'string' || item.updatedAt.length > 40) throw new Error('Horodatage de conversation invalide.');
+    if (item.projectId && !projectIds.has(item.projectId)) throw new Error('Projet de conversation introuvable dans la sauvegarde.');
     return { id:item.id, profileId:item.profileId, ...validateConversation(item), createdAt:item.createdAt, updatedAt:item.updatedAt };
   });
-  return { auth:data.auth, conversations };
+  return { auth:data.auth, projects, conversations };
 }
 
 async function createEncryptedBackup(passphrase) {
@@ -326,7 +381,8 @@ async function createEncryptedBackup(passphrase) {
   const key = Buffer.from(await scrypt(backupPassphrase(passphrase), salt, 32, SCRYPT_OPTIONS));
   const auth = await loadAuth(); const allowedProfiles = new Set(['remote', ...auth.users.flatMap(user => user.profiles.map(profile => profile.id))]);
   const conversations = (await loadConversations()).filter(item => allowedProfiles.has(item.profileId));
-  const payload = Buffer.from(JSON.stringify({ version:1, auth, conversations }), 'utf8');
+  const projects = (await loadProjects()).filter(item => allowedProfiles.has(item.profileId));
+  const payload = Buffer.from(JSON.stringify({ version:1, auth, projects, conversations }), 'utf8');
   const cipher = createCipheriv('aes-256-gcm', key, iv); cipher.setAAD(Buffer.from(`aster-backup-v1:${createdAt}`));
   const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
   return { format:'aster-backup', version:1, createdAt, kdf:{ name:'scrypt', N:SCRYPT_OPTIONS.N, r:SCRYPT_OPTIONS.r, p:SCRYPT_OPTIONS.p, salt:salt.toString('base64') }, cipher:{ name:'aes-256-gcm', iv:iv.toString('base64'), tag:cipher.getAuthTag().toString('base64') }, data:encrypted.toString('base64') };
@@ -455,15 +511,15 @@ async function api(req, res, url) {
     if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
     const input = await body(req, 50_000_000);
     if (input.confirmation !== 'RESTAURER') return json(res, 400, { error:'Confirmation de restauration invalide.' });
-    const restored = await openEncryptedBackup(input.backup, input.passphrase); const currentConversations = await loadConversations();
+    const restored = await openEncryptedBackup(input.backup, input.passphrase); const currentConversations = await loadConversations(); const currentProjects = await loadProjects();
     try {
-      await saveAuth(restored.auth); await saveConversations(restored.conversations);
+      await saveAuth(restored.auth); await saveProjects(restored.projects); await saveConversations(restored.conversations);
     } catch (error) {
-      await saveAuth(currentAuth).catch(() => {}); await saveConversations(currentConversations).catch(() => {});
+      await saveAuth(currentAuth).catch(() => {}); await saveProjects(currentProjects).catch(() => {}); await saveConversations(currentConversations).catch(() => {});
       throw Object.assign(new Error('Restauration interrompue ; les données précédentes ont été conservées.'), { status:500, cause:error });
     }
     sessions.clear(); loginAttempts.clear(); pinAttempts.clear(); res.setHeader('set-cookie', sessionCookie('', 0));
-    return json(res, 200, { ok:true, users:restored.auth.users.length, conversations:restored.conversations.length });
+    return json(res, 200, { ok:true, users:restored.auth.users.length, projects:restored.projects.length, conversations:restored.conversations.length });
   }
   if (url.pathname === '/api/admin/config' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
@@ -539,7 +595,8 @@ async function api(req, res, url) {
       deleted = { id:user.id, profileIds:user.profiles.map(profile => profile.id) }; auth.users.splice(index, 1);
     });
     revokeUserSessions(deleted.id);
-    await mutateConversations((conversations) => conversations.filter(item => !deleted.profileIds.includes(item.profileId)));
+    await mutateConversations((conversations) => { const kept = conversations.filter(item => !deleted.profileIds.includes(item.profileId)); conversations.splice(0, conversations.length, ...kept); });
+    await mutateProjects((projects) => { const kept = projects.filter(item => !deleted.profileIds.includes(item.profileId)); projects.splice(0, projects.length, ...kept); });
     return json(res, 200, { ok:true });
   }
   const adminDeleteProfileMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})$/i);
@@ -557,7 +614,8 @@ async function api(req, res, url) {
       deleted = { userId:user.id, profileId:profile.id }; user.profiles.splice(index, 1);
     });
     revokeUserSessions(deleted.userId, deleted.profileId);
-    await mutateConversations((conversations) => conversations.filter(item => item.profileId !== deleted.profileId));
+    await mutateConversations((conversations) => { const kept = conversations.filter(item => item.profileId !== deleted.profileId); conversations.splice(0, conversations.length, ...kept); });
+    await mutateProjects((projects) => { const kept = projects.filter(item => item.profileId !== deleted.profileId); projects.splice(0, projects.length, ...kept); });
     return json(res, 200, { ok:true });
   }
   const adminPinMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})\/pin$/i);
@@ -600,6 +658,48 @@ async function api(req, res, url) {
     return json(res, 200, { policy:saved });
   }
   if (session.userId !== 'remote' && !session.profileId) return json(res, 403, { error:'Sélectionnez un profil.' });
+  const projectMatch = url.pathname.match(/^\/api\/projects\/([0-9a-f-]{36})$/i);
+  if (url.pathname === '/api/projects' && req.method === 'GET') {
+    const projects = (await loadProjects()).filter(item => item.profileId === session.profileId);
+    return json(res, 200, { projects });
+  }
+  if (url.pathname === '/api/projects' && req.method === 'POST') {
+    const name = projectName(await body(req));
+    const project = await mutateProjects(projects => {
+      if (projects.filter(item => item.profileId === session.profileId).length >= 50) throw Object.assign(new Error('Maximum 50 projets par profil.'), { status:409 });
+      const now = new Date().toISOString(); const created = { id:randomUUID(), profileId:session.profileId, name, createdAt:now, updatedAt:now }; projects.push(created); return created;
+    });
+    return json(res, 201, { project });
+  }
+  if (projectMatch && req.method === 'PATCH') {
+    const name = projectName(await body(req));
+    const project = await mutateProjects(projects => {
+      const item = projects.find(project => project.id === projectMatch[1] && project.profileId === session.profileId);
+      if (!item) throw Object.assign(new Error('Projet introuvable.'), { status:404 });
+      item.name = name; item.updatedAt = new Date().toISOString(); return item;
+    });
+    return json(res, 200, { project });
+  }
+  if (projectMatch && req.method === 'DELETE') {
+    await mutateProjects(projects => {
+      const index = projects.findIndex(project => project.id === projectMatch[1] && project.profileId === session.profileId);
+      if (index < 0) throw Object.assign(new Error('Projet introuvable.'), { status:404 }); projects.splice(index, 1);
+    });
+    await mutateConversations(conversations => { for (const item of conversations) if (item.profileId === session.profileId && item.projectId === projectMatch[1]) item.projectId = null; });
+    return json(res, 200, { ok:true });
+  }
+  if (url.pathname === '/api/search' && req.method === 'GET') {
+    const query = String(url.searchParams.get('q') || '').trim();
+    if (query.length < 2 || query.length > 80) return json(res, 400, { error:'La recherche doit contenir entre 2 et 80 caractères.' });
+    const needle = query.toLocaleLowerCase('fr'); const conversations = (await loadConversations()).filter(item => item.profileId === session.profileId);
+    const results = conversations.flatMap(item => {
+      const titleMatch = item.title.toLocaleLowerCase('fr').includes(needle); const message = item.messages.find(entry => entry.content.toLocaleLowerCase('fr').includes(needle));
+      if (!titleMatch && !message) return [];
+      const index = message ? message.content.toLocaleLowerCase('fr').indexOf(needle) : -1; const snippet = message ? message.content.slice(Math.max(0, index - 45), index + query.length + 75) : '';
+      return [{ id:item.id, title:item.title, projectId:item.projectId || null, snippet, updatedAt:item.updatedAt }];
+    }).slice(0, 50);
+    return json(res, 200, { results });
+  }
   const conversationMatch = url.pathname.match(/^\/api\/conversations\/([0-9a-f-]{36})$/i);
   if (url.pathname === '/api/conversations' && req.method === 'GET') {
     const conversations = (await loadConversations()).filter(item => item.profileId === session.profileId);
@@ -622,6 +722,7 @@ async function api(req, res, url) {
   }
   if (conversationMatch && (req.method === 'PATCH' || req.method === 'PUT')) {
     const input = validateConversation(await body(req), req.method === 'PATCH');
+    if (input.projectId && !(await loadProjects()).some(project => project.id === input.projectId && project.profileId === session.profileId)) return json(res, 404, { error:'Projet introuvable.' });
     const conversation = await mutateConversations((conversations) => {
       const index = conversations.findIndex(item => item.id === conversationMatch[1] && item.profileId === session.profileId);
       if (index < 0) throw Object.assign(new Error('Conversation introuvable.'), { status:404 });
