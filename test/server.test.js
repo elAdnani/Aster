@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,6 +54,17 @@ test('serves the application shell', async () => {
   assert.doesNotMatch(csp, /unsafe-inline/);
   assert.doesNotMatch(html, /<style>|<script>(?!\s*<\/script>)/i);
   assert.match(html, /bootstrap\.js/);
+});
+
+test('rejects untrusted Host headers to prevent DNS rebinding', async () => {
+  const response = await new Promise((resolve, reject) => {
+    const request = httpRequest({ hostname:'127.0.0.1', port, path:'/api/auth/status', headers:{ host:`attacker.example:${port}` } }, result => {
+      let payload = ''; result.setEncoding('utf8'); result.on('data', chunk => { payload += chunk; }); result.on('end', () => resolve({ status:result.statusCode, body:JSON.parse(payload) }));
+    });
+    request.once('error', reject); request.end();
+  });
+  assert.equal(response.status, 421);
+  assert.match(response.body.error, /Hôte Aster non autorisé/);
 });
 
 test('reports a lightweight startup diagnostic without exposing credentials', async () => {
