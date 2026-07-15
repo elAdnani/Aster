@@ -19,6 +19,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - Mots de passe hachés avec scrypt (`N=2^17`, `r=8`, `p=1`) et sel aléatoire.
 - Sessions aléatoires 256 bits dans un cookie `HttpOnly`, `SameSite=Strict`.
 - Connexion, déconnexion et sélection de profil.
+- PIN optionnel de 4 à 8 chiffres, haché avec scrypt et limité à cinq essais sur dix minutes.
 - Requêtes de conversations systématiquement filtrées par le profil actif.
 - Administration locale : choix Personnel/Foyer/Personnalisé, jusqu’à trois comptes et quatre profils par compte.
 - Création de comptes non administrateurs et ajout de profils par l’administrateur.
@@ -57,7 +58,6 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 ### Fonctionnalités incomplètes
 
-- PIN de profil.
 - Suppression/suspension de compte et profil avec gestion des données associées.
 - Dossiers/projets persistants et déplacement des conversations.
 - Recherche serveur dans le contenu des messages.

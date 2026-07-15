@@ -109,7 +109,8 @@ test('sets up an admin and manages a secure cookie session', async () => {
   const status = await fetch(`http://127.0.0.1:${port}/api/auth/status`, { headers:{ cookie } });
   const statusBody = await status.json();
   assert.equal(statusBody.authenticated, true);
-  assert.equal(statusBody.profile.id, setupBody.profile.id);
+  assert.equal(statusBody.profile, null);
+  assert.equal(statusBody.profiles[0].id, setupBody.profiles[0].id);
   const authStore = await readFile(join(dataDir, 'auth.json'), 'utf8');
   assert.doesNotMatch(authStore, /a-strong-local-password/);
   assert.match(authStore, /passwordHash/);
@@ -137,6 +138,9 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal(login.status, 200);
   const cookie = login.headers.get('set-cookie').split(';')[0];
   const loginBody = await login.json();
+  const adminProfile = loginBody.profiles[0];
+  const beforeProfile = await fetch(`http://127.0.0.1:${port}/api/conversations`, { headers:{ cookie } });
+  assert.equal(beforeProfile.status, 403);
   const configured = await fetch(`http://127.0.0.1:${port}/api/admin/config`, {
     method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ installationMode:'family' })
   });
@@ -167,8 +171,18 @@ test('logs in locally and isolates conversations by profile', async () => {
   const hardenedBody = await hardenedOverview.json();
   assert.equal(hardenedBody.users.length, 3);
   assert.equal(hardenedBody.users.find(user => user.id === member.id).profiles.length, 4);
+  assert.doesNotMatch(JSON.stringify(hardenedBody), /pinHash|pinSalt|passwordHash|passwordSalt/);
+  const pinConfigured = await fetch(`http://127.0.0.1:${port}/api/admin/users/${loginBody.user.id}/profiles/${adminProfile.id}/pin`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ pin:'2468' })
+  });
+  assert.equal(pinConfigured.status, 200);
+  assert.equal((await pinConfigured.json()).profile.pinRequired, true);
+  const wrongPin = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:adminProfile.id, pin:'0000' })
+  });
+  assert.equal(wrongPin.status, 401);
   const selected = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
-    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:loginBody.profile.id })
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:adminProfile.id, pin:'2468' })
   });
   assert.equal(selected.status, 200);
   const created = await fetch(`http://127.0.0.1:${port}/api/conversations`, {
