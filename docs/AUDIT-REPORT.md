@@ -1,6 +1,6 @@
 # Aster Local — état, audit et feuille de route
 
-Date de l’audit : 15 juillet 2026. Version : release candidate `0.2.0-alpha.3`.
+Audit initial : 15 juillet 2026. Dernière vérification : 15 juillet 2026 sur `develop` après `0.2.0-alpha.3`.
 
 ## Résumé exécutif
 
@@ -18,6 +18,7 @@ Le dépôt est publiable comme **prototype expérimental**, mais pas encore pré
 - Premier compte administrateur créé uniquement depuis la boucle locale.
 - Mots de passe hachés avec scrypt (`N=2^17`, `r=8`, `p=1`) et sel aléatoire.
 - Sessions aléatoires 256 bits dans un cookie `HttpOnly`, `SameSite=Strict`.
+- Rotation après sélection du profil, expiration après 12 heures d’inactivité ou sept jours au total, et plafond de dix sessions par compte.
 - Connexion, déconnexion et sélection de profil.
 - PIN optionnel de 4 à 8 chiffres, haché avec scrypt et limité à cinq essais sur dix minutes.
 - Requêtes de conversations systématiquement filtrées par le profil actif.
@@ -41,6 +42,7 @@ Le dépôt est publiable comme **prototype expérimental**, mais pas encore pré
 - Limites de taille sur les corps, messages et conversations.
 - Limitation basique des tentatives de connexion : huit essais par adresse sur dix minutes.
 - Vérification de l’origine des requêtes mutantes lorsque l’en-tête `Origin` est présent.
+- Validation stricte de l’en-tête `Host` et du port, avec liste explicite pour les déploiements non locaux, afin de bloquer le DNS rebinding.
 - CSP, interdiction d’iframe, politique de permissions, `nosniff` et absence de referrer.
 - Aucun outil shell, accès fichiers arbitraire, télémétrie ou téléchargement automatique de modèle.
 
@@ -70,7 +72,7 @@ Le dépôt est publiable comme **prototype expérimental**, mais pas encore pré
 
 ## État des tests
 
-La suite couvre le service statique, la traversée de chemins, la protection API, le cycle CRUD des conversations, les entrées invalides, le setup administrateur, les cookies sécurisés, le login, la configuration de l’installation, la création et le cycle de vie des comptes/profils, leur isolation, ainsi que la sauvegarde/restauration chiffrée avec refus des secrets incorrects et fichiers altérés. Elle doit rester verte avant chaque publication.
+La suite compte actuellement 13 scénarios automatisés. Elle couvre le service statique, le refus des hôtes non autorisés, la traversée de chemins, la protection API, le cycle CRUD des conversations, les entrées invalides, le setup administrateur, les cookies sécurisés, le login, la rotation et l’expiration des sessions, la configuration de l’installation, la création et le cycle de vie des comptes/profils, leur isolation, ainsi que la sauvegarde/restauration chiffrée avec refus des secrets incorrects et fichiers altérés. Elle doit rester verte avant chaque publication.
 
 ## Conditions de publication GitHub
 
@@ -79,7 +81,7 @@ La suite couvre le service statique, la traversée de chemins, la protection API
 - Activer l’analyse de secrets et les mises à jour de sécurité du dépôt.
 - Ajouter une procédure de signalement privé des vulnérabilités.
 - Créer les premières issues depuis la liste des risques critiques et élevés.
-- Ne pas annoncer l’accès Internet, le VPN/Tor, les PIN ou le chiffrement comme terminés.
+- Ne pas annoncer l’accès Internet public, le VPN/Tor ou les skills exécutables comme terminés. Les PIN et le chiffrement local existent, mais ne compensent pas l’absence de coffre système, de TLS et d’audit externe.
 
 ## Ordre recommandé
 
