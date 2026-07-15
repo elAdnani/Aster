@@ -14,7 +14,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - PWA responsive et installable.
 - Détection d’Ollama et catalogue des modèles installés.
 - Chat en streaming avec arrêt de génération.
-- Conversations persistantes avec création, lecture, renommage et suppression.
+- Conversations persistantes avec création, lecture, renommage, suppression et chiffrement AES-256-GCM.
 - Premier compte administrateur créé uniquement depuis la boucle locale.
 - Mots de passe hachés avec scrypt (`N=2^17`, `r=8`, `p=1`) et sel aléatoire.
 - Sessions aléatoires 256 bits dans un cookie `HttpOnly`, `SameSite=Strict`.
@@ -30,7 +30,8 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - API métier fermée sans session ou jeton distant configuré.
 - Routes administrateur limitées au rôle `admin` et à une connexion loopback réelle.
 - Données et `.env` exclus de Git.
-- Écriture atomique des fichiers d’authentification et de conversations.
+- Écriture atomique des fichiers d’authentification et de conversations, avec mutations concurrentes sérialisées.
+- Clé de chiffrement distincte dérivée par profil via HKDF ; contenus et titres absents du JSON en clair.
 - Limites de taille sur les corps, messages et conversations.
 - Limitation basique des tentatives de connexion : huit essais par adresse sur dix minutes.
 - Vérification de l’origine des requêtes mutantes lorsque l’en-tête `Origin` est présent.
@@ -41,7 +42,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 ### Priorité critique avant accès Internet
 
-1. Les conversations et métadonnées sont enregistrées en JSON clair. Ajouter un chiffrement au repos avec clés séparées par profil et une stratégie de récupération.
+1. La clé maîtresse se trouve sur le même compte système que les données. Prévoir sauvegarde/récupération protégée et intégration au coffre de clés du système pour le packaging desktop.
 2. Le jeton distant est un secret global et ne représente pas un utilisateur. Remplacer par des sessions distantes authentifiées, révocables et limitées au profil.
 3. Le serveur ne fournit pas TLS. L’accès distant doit obligatoirement passer par un tunnel ou réseau privé audité avec HTTPS.
 4. Les comptes ne disposent pas encore de récupération de mot de passe, rotation des sessions, liste de sessions ni révocation par appareil.

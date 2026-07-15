@@ -4,6 +4,8 @@
 
 The application now fails closed: business APIs require an authenticated session, the first administrator can only be created from loopback, and conversations are scoped to the active profile on every server query. Passwords use salted scrypt (`N=2^17`, `r=8`, `p=1`); session identifiers are random, revocable, kept server-side and sent only through an `HttpOnly`, `SameSite=Strict` cookie. Administrative model, rule and skill persistence is still a planned server-side capability and must not rely on browser state.
 
+Conversation payloads are encrypted at rest with AES-256-GCM. A 256-bit local master key is created in `data/storage.key`, then HKDF derives a distinct encryption key for each profile. Titles, messages and model names are authenticated and encrypted; ownership identifiers and timestamps remain visible so the service can route records. Existing plaintext records are read for migration and rewritten encrypted on the next conversation mutation. This protects copied data files from casual disclosure, but it does not protect against an attacker who can read both the data directory and its key while the operating-system account is compromised.
+
 Aster is local-first, not magically safe. The v0.1 server listens on loopback by default and intentionally offers no shell or filesystem tools. Never bind it to a public interface without authentication and a trusted encrypted network.
 
 Report vulnerabilities privately to the future security contact before publishing details. Until a contact is configured, open a minimal GitHub issue asking maintainers for a private channel without including exploit details.
