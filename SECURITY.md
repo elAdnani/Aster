@@ -6,6 +6,8 @@ The application now fails closed: business APIs require an authenticated session
 
 Conversation payloads are encrypted at rest with AES-256-GCM. A 256-bit local master key is created in `data/storage.key`, then HKDF derives a distinct encryption key for each profile. Titles, messages and model names are authenticated and encrypted; ownership identifiers and timestamps remain visible so the service can route records. Existing plaintext records are read for migration and rewritten encrypted on the next conversation mutation. This protects copied data files from casual disclosure, but it does not protect against an attacker who can read both the data directory and its key while the operating-system account is compromised.
 
+Profiles can be protected by an optional 4-to-8 digit PIN configured by the local administrator. PINs use the same memory-hard salted scrypt protection as account passwords. Profile selection starts locked after every account login or server restart, failed attempts are limited, and API responses expose only `pinRequired`, never PIN salts or hashes.
+
 Aster is local-first, not magically safe. The v0.1 server listens on loopback by default and intentionally offers no shell or filesystem tools. Never bind it to a public interface without authentication and a trusted encrypted network.
 
 Report vulnerabilities privately to the future security contact before publishing details. Until a contact is configured, open a minimal GitHub issue asking maintainers for a private channel without including exploit details.

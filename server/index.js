@@ -19,6 +19,7 @@ const authFile = join(dataDir, 'auth.json');
 const storageKeyFile = join(dataDir, 'storage.key');
 const sessions = new Map();
 const loginAttempts = new Map();
+const pinAttempts = new Map();
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const SCRYPT_OPTIONS = { N:131072, r:8, p:1, maxmem:256 * 1024 * 1024 };
 const MAX_CONVERSATIONS = 500;
@@ -43,6 +44,22 @@ function checkLoginRate(req) {
   const recent = (loginAttempts.get(key) || []).filter(time => now - time < 10 * 60 * 1000);
   if (recent.length >= 8) throw Object.assign(new Error('Trop de tentatives. Réessayez dans quelques minutes.'), { status:429 });
   recent.push(now); loginAttempts.set(key, recent);
+}
+
+function publicProfile(profile) {
+  return profile ? { id:profile.id, name:profile.name, pinRequired:!!profile.pinHash } : null;
+}
+
+function publicUser(user, includeProfiles = false) {
+  return { id:user.id, username:user.username, role:user.role, ...(includeProfiles ? { profiles:user.profiles.map(publicProfile) } : {}) };
+}
+
+function checkPinRate(session, profileId) {
+  const key = `${session.userId}:${profileId}`; const now = Date.now();
+  const recent = (pinAttempts.get(key) || []).filter(time => now - time < 10 * 60 * 1000);
+  if (recent.length >= 5) throw Object.assign(new Error('Trop de tentatives de PIN. Réessayez dans quelques minutes.'), { status:429 });
+  recent.push(now); pinAttempts.set(key, recent);
+  return key;
 }
 
 function cookie(req, name) {
@@ -117,9 +134,9 @@ async function passwordHash(password, salt = randomBytes(16)) {
   return { salt:salt.toString('base64'), hash:Buffer.from(derived).toString('base64') };
 }
 
-async function passwordMatches(password, user) {
-  const expected = Buffer.from(user.passwordHash, 'base64');
-  const actual = Buffer.from(await scrypt(password, Buffer.from(user.passwordSalt, 'base64'), expected.length, SCRYPT_OPTIONS));
+async function passwordMatches(password, user, kind = 'password') {
+  const expected = Buffer.from(user[`${kind}Hash`], 'base64');
+  const actual = Buffer.from(await scrypt(password, Buffer.from(user[`${kind}Salt`], 'base64'), expected.length, SCRYPT_OPTIONS));
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
@@ -255,8 +272,8 @@ async function api(req, res, url) {
       if (auth.users.length) throw Object.assign(new Error('Un administrateur existe déjà.'), { status:409 });
       auth.users.push(user);
     });
-    startSession(res, user, profile.id);
-    return json(res, 201, { user:{ id:user.id, username:user.username, role:user.role }, profiles:user.profiles, profile });
+    startSession(res, user, null);
+    return json(res, 201, { user:publicUser(user), profiles:user.profiles.map(publicProfile), profile:null });
   }
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
     checkLoginRate(req);
@@ -265,9 +282,8 @@ async function api(req, res, url) {
     const user = auth.users.find(item => item.username === input.username);
     if (!user || !(await passwordMatches(input.password, user))) return json(res, 401, { error:'Identifiants incorrects.' });
     loginAttempts.delete(req.socket.remoteAddress || 'unknown');
-    const profile = user.profiles.find(item => item.id === input.profileId) || user.profiles[0];
-    startSession(res, user, profile.id);
-    return json(res, 200, { user:{ id:user.id, username:user.username, role:user.role }, profiles:user.profiles, profile });
+    startSession(res, user, null);
+    return json(res, 200, { user:publicUser(user), profiles:user.profiles.map(publicProfile), profile:null });
   }
   if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
     sessions.delete(cookie(req, 'aster_session')); res.setHeader('set-cookie', sessionCookie('', 0));
@@ -278,8 +294,8 @@ async function api(req, res, url) {
     if (!session) return json(res, 200, { configured:auth.users.length > 0, authenticated:false });
     if (session.userId === 'remote') return json(res, 200, { configured:auth.users.length > 0, authenticated:true, remote:true, profile:{ id:'remote', name:'Remote' } });
     const user = auth.users.find(item => item.id === session.userId); const profile = user?.profiles.find(item => item.id === session.profileId);
-    if (!user || !profile) return json(res, 200, { configured:auth.users.length > 0, authenticated:false });
-    return json(res, 200, { configured:true, installationConfigured:!!auth.installationMode, authenticated:true, user:{ id:user.id, username:user.username, role:user.role }, profiles:user.profiles, profile });
+    if (!user) return json(res, 200, { configured:auth.users.length > 0, authenticated:false });
+    return json(res, 200, { configured:true, installationConfigured:!!auth.installationMode, authenticated:true, user:publicUser(user), profiles:user.profiles.map(publicProfile), profile:publicProfile(profile) });
   }
   let session = sessionFor(req);
   if (!session) return json(res, 401, { error:'Authentification requise.' });
@@ -289,8 +305,14 @@ async function api(req, res, url) {
     const profileInput = await body(req);
     const profile = user?.profiles.find(item => item.id === String(profileInput.profileId || ''));
     if (!profile) return json(res, 404, { error:'Profil introuvable.' });
+    if (profile.pinHash) {
+      const attemptKey = checkPinRate(session, profile.id);
+      const pin = String(profileInput.pin || '');
+      if (!(await passwordMatches(pin, profile, 'pin'))) return json(res, 401, { error:'PIN incorrect.' });
+      pinAttempts.delete(attemptKey);
+    }
     session.profileId = profile.id;
-    return json(res, 200, { profile });
+    return json(res, 200, { profile:publicProfile(profile) });
   }
   if (url.pathname === '/api/admin/profiles' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
@@ -301,7 +323,7 @@ async function api(req, res, url) {
       if (!user || user.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
       if (user.profiles.length >= 4) throw Object.assign(new Error('Limite de quatre profils atteinte.'), { status:409 });
       const profile = { id:randomUUID(), name }; user.profiles.push(profile);
-      return { profile, profiles:user.profiles };
+      return { profile:publicProfile(profile), profiles:user.profiles.map(publicProfile) };
     });
     return json(res, 201, result);
   }
@@ -309,7 +331,7 @@ async function api(req, res, url) {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
     const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
     if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
-    return json(res, 200, { installationMode:auth.installationMode, maxUsers:auth.installationMode === 'solo' ? 1 : 3, users:auth.users.map(user => ({ id:user.id, username:user.username, role:user.role, profiles:user.profiles })) });
+    return json(res, 200, { installationMode:auth.installationMode, maxUsers:auth.installationMode === 'solo' ? 1 : 3, users:auth.users.map(user => publicUser(user, true)) });
   }
   if (url.pathname === '/api/admin/config' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
@@ -337,7 +359,7 @@ async function api(req, res, url) {
       if (auth.users.some(item => item.username === input.username)) throw Object.assign(new Error('Cet identifiant existe déjà.'), { status:409 });
       auth.users.push(user);
     });
-    return json(res, 201, { user:{ id:user.id, username:user.username, role:user.role, profiles:user.profiles } });
+    return json(res, 201, { user:publicUser(user, true) });
   }
   const adminProfileMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles$/i);
   if (adminProfileMatch && req.method === 'POST') {
@@ -351,10 +373,28 @@ async function api(req, res, url) {
       if (!user) throw Object.assign(new Error('Compte introuvable.'), { status:404 });
       if (user.profiles.length >= 4) throw Object.assign(new Error('Limite de quatre profils atteinte.'), { status:409 });
       const profile = { id:randomUUID(), name }; user.profiles.push(profile);
-      return { profile, profiles:user.profiles };
+      return { profile:publicProfile(profile), profiles:user.profiles.map(publicProfile) };
     });
     return json(res, 201, result);
   }
+  const adminPinMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})\/pin$/i);
+  if (adminPinMatch && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const input = await body(req); const pin = String(input.pin || '');
+    if (pin && !/^\d{4,8}$/.test(pin)) return json(res, 400, { error:'Le PIN doit contenir entre 4 et 8 chiffres.' });
+    const pinSecret = pin ? await passwordHash(pin) : null;
+    const result = await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      const user = auth.users.find(item => item.id === adminPinMatch[1]); const profile = user?.profiles.find(item => item.id === adminPinMatch[2]);
+      if (!profile) throw Object.assign(new Error('Profil introuvable.'), { status:404 });
+      if (pinSecret) { profile.pinSalt = pinSecret.salt; profile.pinHash = pinSecret.hash; }
+      else { delete profile.pinSalt; delete profile.pinHash; }
+      return publicProfile(profile);
+    });
+    return json(res, 200, { profile:result });
+  }
+  if (session.userId !== 'remote' && !session.profileId) return json(res, 403, { error:'Sélectionnez un profil.' });
   const conversationMatch = url.pathname.match(/^\/api\/conversations\/([0-9a-f-]{36})$/i);
   if (url.pathname === '/api/conversations' && req.method === 'GET') {
     const conversations = (await loadConversations()).filter(item => item.profileId === session.profileId);
