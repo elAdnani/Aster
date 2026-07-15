@@ -51,7 +51,7 @@ Le dépôt est publiable comme **prototype expérimental**, mais pas encore pré
 1. La clé maîtresse se trouve sur le même compte système que les données. Prévoir sauvegarde/récupération protégée et intégration au coffre de clés du système pour le packaging desktop.
 2. Le jeton distant est un secret global et ne représente pas un utilisateur. Remplacer par des sessions distantes authentifiées, révocables et limitées au profil.
 3. Le serveur ne fournit pas TLS. L’accès distant doit obligatoirement passer par un tunnel ou réseau privé audité avec HTTPS.
-4. Les comptes disposent d’une liste de sessions en mémoire et d’une révocation par appareil ; récupération de mot de passe et rotation périodique restent à concevoir avant l’accès distant.
+4. Les comptes disposent d’une liste de sessions en mémoire, d’une révocation par appareil, d’une rotation après sélection du profil et d’une expiration inactive ; récupération de mot de passe et rotation périodique supplémentaire restent à concevoir avant l’accès distant.
 
 ### Priorité élevée
 

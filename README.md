@@ -50,7 +50,7 @@ Le nom du modèle est configurable et n’est pas une dépendance du projet.
 - Planification privée par profil avec tâches, échéances et rattachement facultatif à un projet.
 - Stockage JSON atomique avec [journal de transaction récupérable](./docs/storage-transactions.md) pour les opérations multi-fichiers.
 - Comptes administrateur/utilisateur, sélection de profils et déconnexion.
-- Gestion des sessions du compte avec révocation par appareil, sans journaliser l’adresse IP ni le navigateur complet.
+- Gestion des sessions du compte avec révocation par appareil, rotation après sélection du profil et expiration inactive, sans journaliser l’adresse IP ni le navigateur complet.
 - PIN de profil haché avec scrypt et essais limités.
 - Isolation serveur des conversations par profil.
 - Chiffrement authentifié des titres, messages et modèles au repos.

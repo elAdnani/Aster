@@ -194,6 +194,37 @@ test('sets up an admin and manages a secure cookie session', async () => {
   assert.equal((await afterLogout.json()).authenticated, false);
 });
 
+test('rotates and limits account sessions', async () => {
+  const sessionDir = await mkdtemp(join(tmpdir(), 'aster-sessions-')); const sessionPort = 4404;
+  const sessionChild = spawn(process.execPath, ['server/index.js'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(sessionPort), HOST:'127.0.0.1', ASTER_DATA_DIR:sessionDir, ASTER_SESSION_IDLE_MS:'60000', ASTER_MAX_USER_SESSIONS:'3' }, stdio:'ignore' });
+  try {
+    for (let i=0;i<30;i++) { try { await fetch(`http://127.0.0.1:${sessionPort}/`); break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); } }
+    const setup = await fetch(`http://127.0.0.1:${sessionPort}/api/auth/setup`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'rotation', password:'rotation-password-123', profileName:'Privé' }) });
+    const setupBody = await setup.json(); const originalCookie = setup.headers.get('set-cookie').split(';')[0];
+    const selected = await fetch(`http://127.0.0.1:${sessionPort}/api/auth/profile`, { method:'POST', headers:{ cookie:originalCookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:setupBody.profiles[0].id }) });
+    const rotatedCookie = selected.headers.get('set-cookie').split(';')[0];
+    assert.notEqual(rotatedCookie, originalCookie);
+    assert.equal((await (await fetch(`http://127.0.0.1:${sessionPort}/api/auth/status`, { headers:{ cookie:originalCookie } })).json()).authenticated, false);
+    const loginCookies = [];
+    for (let i=0;i<3;i++) { const login = await fetch(`http://127.0.0.1:${sessionPort}/api/auth/login`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'rotation', password:'rotation-password-123' }) }); loginCookies.push(login.headers.get('set-cookie').split(';')[0]); }
+    const newest = loginCookies.at(-1); const sessionsResponse = await fetch(`http://127.0.0.1:${sessionPort}/api/auth/sessions`, { headers:{ cookie:newest } });
+    assert.equal((await sessionsResponse.json()).sessions.length, 3);
+    assert.equal((await (await fetch(`http://127.0.0.1:${sessionPort}/api/auth/status`, { headers:{ cookie:rotatedCookie } })).json()).authenticated, false);
+  } finally { sessionChild.kill(); await rm(sessionDir, { recursive:true, force:true }); }
+});
+
+test('expires an inactive session', async () => {
+  const idleDir = await mkdtemp(join(tmpdir(), 'aster-idle-')); const idlePort = 4405;
+  const idleChild = spawn(process.execPath, ['server/index.js'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(idlePort), HOST:'127.0.0.1', ASTER_DATA_DIR:idleDir, ASTER_SESSION_IDLE_MS:'150' }, stdio:'ignore' });
+  try {
+    for (let i=0;i<30;i++) { try { await fetch(`http://127.0.0.1:${idlePort}/`); break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); } }
+    const setup = await fetch(`http://127.0.0.1:${idlePort}/api/auth/setup`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'inactive', password:'inactive-password-123', profileName:'Privé' }) });
+    const cookie = setup.headers.get('set-cookie').split(';')[0];
+    await new Promise(resolve => setTimeout(resolve, 180));
+    assert.equal((await (await fetch(`http://127.0.0.1:${idlePort}/api/auth/status`, { headers:{ cookie } })).json()).authenticated, false);
+  } finally { idleChild.kill(); await rm(idleDir, { recursive:true, force:true }); }
+});
+
 test('logs in locally and isolates conversations by profile', async () => {
   const denied = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
     method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'admin', password:'wrong-password!' })
@@ -203,7 +234,7 @@ test('logs in locally and isolates conversations by profile', async () => {
     method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'ADMIN', password:'a-strong-local-password' })
   });
   assert.equal(login.status, 200);
-  const cookie = login.headers.get('set-cookie').split(';')[0];
+  let cookie = login.headers.get('set-cookie').split(';')[0];
   const loginBody = await login.json();
   const adminProfile = loginBody.profiles[0];
   const beforeProfile = await fetch(`http://127.0.0.1:${port}/api/conversations`, { headers:{ cookie } });
@@ -252,6 +283,8 @@ test('logs in locally and isolates conversations by profile', async () => {
     method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:adminProfile.id, pin:'2468' })
   });
   assert.equal(selected.status, 200);
+  const rotatedCookie = selected.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(rotatedCookie); assert.notEqual(rotatedCookie, cookie); cookie = rotatedCookie;
   const catalogBefore = await fetch(`http://127.0.0.1:${port}/api/admin/models/catalog`, { headers:{ cookie } });
   const catalogBeforeBody = await catalogBefore.json();
   assert.equal(catalogBeforeBody.engineAvailable, true);
@@ -385,12 +418,13 @@ test('logs in locally and isolates conversations by profile', async () => {
     method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'membre', password:'another-strong-password' })
   });
   assert.equal(memberLogin.status, 200);
-  const memberCookie = memberLogin.headers.get('set-cookie').split(';')[0]; const memberLoginBody = await memberLogin.json();
+  let memberCookie = memberLogin.headers.get('set-cookie').split(';')[0]; const memberLoginBody = await memberLogin.json();
   const removedProfile = memberLoginBody.profiles[1];
   const memberSelected = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
     method:'POST', headers:{ cookie:memberCookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:removedProfile.id })
   });
   assert.equal(memberSelected.status, 200);
+  memberCookie = memberSelected.headers.get('set-cookie').split(';')[0];
   const memberConversation = await fetch(`http://127.0.0.1:${port}/api/conversations`, {
     method:'POST', headers:{ cookie:memberCookie, 'content-type':'application/json' }, body:JSON.stringify({ title:'À effacer', messages:[] })
   });
@@ -440,11 +474,12 @@ test('logs in locally and isolates conversations by profile', async () => {
     method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'ADMIN', password:'a-strong-local-password' })
   });
   assert.equal(loginAfterRestore.status, 200);
-  const restoredCookie = loginAfterRestore.headers.get('set-cookie').split(';')[0]; const restoredLoginBody = await loginAfterRestore.json();
+  let restoredCookie = loginAfterRestore.headers.get('set-cookie').split(';')[0]; const restoredLoginBody = await loginAfterRestore.json();
   const restoredSelected = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
     method:'POST', headers:{ cookie:restoredCookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:restoredLoginBody.profiles[0].id, pin:'2468' })
   });
   assert.equal(restoredSelected.status, 200);
+  restoredCookie = restoredSelected.headers.get('set-cookie').split(';')[0];
   const renamedProject = await fetch(`http://127.0.0.1:${port}/api/projects/${project.id}`, {
     method:'PATCH', headers:{ cookie:restoredCookie, 'content-type':'application/json' }, body:JSON.stringify({ name:'Projet restauré' })
   });
