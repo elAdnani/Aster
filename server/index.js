@@ -1,6 +1,6 @@
 import http from 'node:http';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,7 @@ const authFile = join(dataDir, 'auth.json');
 const storageKeyFile = join(dataDir, 'storage.key');
 const projectFile = join(dataDir, 'projects.json');
 const taskFile = join(dataDir, 'tasks.json');
+const transactionFile = join(dataDir, 'transaction.json');
 const sessions = new Map();
 const loginAttempts = new Map();
 const pinAttempts = new Map();
@@ -36,11 +37,9 @@ const MODEL_CATALOG = [
   { name:'gemma4:26b', label:'Gemma 4 26B A4B', sizeBytes:18_000_000_000, context:262144, tier:'avancé', modalities:['texte','image'] }
 ];
 const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json', '.svg':'image/svg+xml', '.webmanifest':'application/manifest+json' };
-let mutation = Promise.resolve();
-let authMutation = Promise.resolve();
-let projectMutation = Promise.resolve();
-let taskMutation = Promise.resolve();
+let storageMutation = Promise.resolve();
 let storageKeyPromise;
+let recoveryPromise;
 
 function json(res, status, body) {
   res.writeHead(status, { ...securityHeaders(), 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' });
@@ -137,7 +136,68 @@ function isLoopback(req) {
   return address === '127.0.0.1' || address === '::1' || address.startsWith('::ffff:127.');
 }
 
-async function loadAuth() {
+const transactionalStores = { auth:authFile, projects:projectFile, tasks:taskFile, conversations:conversationFile };
+
+async function atomicWriteRaw(path, data) {
+  await mkdir(dirname(path), { recursive:true }); const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, data, { flag:'wx', mode:0o600 }); await rename(temporary, path);
+}
+
+async function snapshotRawStores() {
+  const stores = {};
+  for (const [name, path] of Object.entries(transactionalStores)) {
+    try { const data = await readFile(path); stores[name] = { data:data.toString('base64'), sha256:createHash('sha256').update(data).digest('hex') }; }
+    catch (error) { if (error.code === 'ENOENT') stores[name] = null; else throw error; }
+  }
+  return { version:1, stores };
+}
+
+async function restoreRawStores(journal) {
+  const names = journal?.stores ? Object.keys(journal.stores) : [];
+  if (!journal || journal.version !== 1 || names.length !== Object.keys(transactionalStores).length || names.some(name => !(name in transactionalStores))) throw new Error('invalid transaction journal');
+  for (const [name, path] of Object.entries(transactionalStores)) {
+    const value = journal.stores[name];
+    if (value === null || value === undefined) await unlink(path).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    else if (value && typeof value.data === 'string' && /^[0-9a-f]{64}$/.test(value.sha256)) { const data = Buffer.from(value.data, 'base64'); if (createHash('sha256').update(data).digest('hex') !== value.sha256) throw new Error('transaction checksum mismatch'); await atomicWriteRaw(path, data); }
+    else throw new Error('invalid transaction snapshot');
+  }
+}
+
+async function writeTransactionJournal(journal) {
+  await atomicWriteRaw(transactionFile, Buffer.from(`${JSON.stringify(journal)}\n`, 'utf8'));
+}
+
+async function ensureStorageRecovery() {
+  if (!recoveryPromise) recoveryPromise = (async () => {
+    try { const journal = JSON.parse(await readFile(transactionFile, 'utf8')); await restoreRawStores(journal); await unlink(transactionFile); }
+    catch (error) { if (error.code !== 'ENOENT') throw Object.assign(new Error('Une transaction de stockage interrompue ne peut pas être récupérée.'), { status:500 }); }
+  })();
+  return recoveryPromise;
+}
+
+function serializeStorage(operation) {
+  const next = storageMutation.then(operation); storageMutation = next.catch(() => {}); return next;
+}
+
+function mutateStorageBundle(operation) {
+  return serializeStorage(async () => {
+    await ensureStorageRecovery();
+    const state = { auth:await loadAuth(true), projects:await loadProjects(true), tasks:await loadTasks(true), conversations:await loadConversations(true) };
+    const result = await operation(state); const journal = await snapshotRawStores(); await writeTransactionJournal(journal);
+    try {
+      await saveAuth(state.auth); await saveProjects(state.projects); await saveTasks(state.tasks); await saveConversations(state.conversations); await unlink(transactionFile);
+      return result;
+    } catch (error) {
+      try { await restoreRawStores(journal); await unlink(transactionFile); }
+      catch { throw Object.assign(new Error('La transaction a échoué et sa récupération nécessite une intervention.'), { status:500 }); }
+      throw Object.assign(new Error('La transaction a échoué ; les données précédentes ont été restaurées.'), { status:500, cause:error });
+    }
+  });
+}
+
+async function loadAuth(serialized = false) {
+  if (!serialized) await storageMutation;
+  await ensureStorageRecovery();
   try {
     const value = JSON.parse(await readFile(authFile, 'utf8'));
     if (!value || !Array.isArray(value.users)) throw new Error('invalid auth store');
@@ -156,14 +216,12 @@ async function saveAuth(value) {
 }
 
 function mutateAuth(operation) {
-  const next = authMutation.then(async () => {
-    const auth = await loadAuth();
+  return serializeStorage(async () => {
+    const auth = await loadAuth(true);
     const result = await operation(auth);
     await saveAuth(auth);
     return result;
   });
-  authMutation = next.catch(() => {});
-  return next;
 }
 
 function validateCredentials(input, setup = false) {
@@ -265,7 +323,9 @@ async function body(req, limit = 2_000_000) {
   catch { throw Object.assign(new Error('JSON invalide.'), { status:400 }); }
 }
 
-async function loadConversations() {
+async function loadConversations(serialized = false) {
+  if (!serialized) await storageMutation;
+  await ensureStorageRecovery();
   try {
     const value = JSON.parse(await readFile(conversationFile, 'utf8'));
     if (!Array.isArray(value)) throw new Error('invalid store');
@@ -284,7 +344,9 @@ async function saveConversations(conversations) {
   await rename(temporary, conversationFile);
 }
 
-async function loadProjects() {
+async function loadProjects(serialized = false) {
+  if (!serialized) await storageMutation;
+  await ensureStorageRecovery();
   try {
     const records = JSON.parse(await readFile(projectFile, 'utf8'));
     if (!Array.isArray(records)) throw new Error('invalid store');
@@ -314,8 +376,7 @@ async function saveProjects(projects) {
 }
 
 function mutateProjects(operation) {
-  const next = projectMutation.then(async () => { const projects = await loadProjects(); const result = await operation(projects); await saveProjects(projects); return result; });
-  projectMutation = next.catch(() => {}); return next;
+  return serializeStorage(async () => { const projects = await loadProjects(true); const result = await operation(projects); await saveProjects(projects); return result; });
 }
 
 function projectName(input) {
@@ -324,7 +385,9 @@ function projectName(input) {
   return name;
 }
 
-async function loadTasks() {
+async function loadTasks(serialized = false) {
+  if (!serialized) await storageMutation;
+  await ensureStorageRecovery();
   try {
     const records = JSON.parse(await readFile(taskFile, 'utf8')); if (!Array.isArray(records)) throw new Error('invalid store');
     return await Promise.all(records.map(async record => {
@@ -352,8 +415,7 @@ async function saveTasks(tasks) {
 }
 
 function mutateTasks(operation) {
-  const next = taskMutation.then(async () => { const tasks = await loadTasks(); const result = await operation(tasks); await saveTasks(tasks); return result; });
-  taskMutation = next.catch(() => {}); return next;
+  return serializeStorage(async () => { const tasks = await loadTasks(true); const result = await operation(tasks); await saveTasks(tasks); return result; });
 }
 
 function validateTask(input, partial = false) {
@@ -437,10 +499,10 @@ function validateBackupData(data) {
 async function createEncryptedBackup(passphrase) {
   const salt = randomBytes(16); const iv = randomBytes(12); const createdAt = new Date().toISOString();
   const key = Buffer.from(await scrypt(backupPassphrase(passphrase), salt, 32, SCRYPT_OPTIONS));
-  const auth = await loadAuth(); const allowedProfiles = new Set(['remote', ...auth.users.flatMap(user => user.profiles.map(profile => profile.id))]);
-  const conversations = (await loadConversations()).filter(item => allowedProfiles.has(item.profileId));
-  const projects = (await loadProjects()).filter(item => allowedProfiles.has(item.profileId));
-  const tasks = (await loadTasks()).filter(item => allowedProfiles.has(item.profileId));
+  const auth = await loadAuth(true); const allowedProfiles = new Set(['remote', ...auth.users.flatMap(user => user.profiles.map(profile => profile.id))]);
+  const conversations = (await loadConversations(true)).filter(item => allowedProfiles.has(item.profileId));
+  const projects = (await loadProjects(true)).filter(item => allowedProfiles.has(item.profileId));
+  const tasks = (await loadTasks(true)).filter(item => allowedProfiles.has(item.profileId));
   const payload = Buffer.from(JSON.stringify({ version:1, auth, projects, tasks, conversations }), 'utf8');
   const cipher = createCipheriv('aes-256-gcm', key, iv); cipher.setAAD(Buffer.from(`aster-backup-v1:${createdAt}`));
   const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
@@ -474,14 +536,12 @@ function validatePolicy(input) {
 }
 
 function mutateConversations(operation) {
-  const next = mutation.then(async () => {
-    const conversations = await loadConversations();
+  return serializeStorage(async () => {
+    const conversations = await loadConversations(true);
     const result = await operation(conversations);
     await saveConversations(conversations);
     return result;
   });
-  mutation = next.catch(() => {});
-  return next;
 }
 
 async function api(req, res, url) {
@@ -588,7 +648,7 @@ async function api(req, res, url) {
     if (!isLoopback(req)) return json(res, 403, { error:'Sauvegarde administrateur autorisée uniquement en local.' });
     const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
     if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
-    const input = await body(req); const backup = await createEncryptedBackup(input.passphrase);
+    const input = await body(req); const backup = await serializeStorage(() => createEncryptedBackup(input.passphrase));
     return json(res, 200, { backup });
   }
   if (url.pathname === '/api/admin/restore' && req.method === 'POST') {
@@ -597,13 +657,8 @@ async function api(req, res, url) {
     if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
     const input = await body(req, 50_000_000);
     if (input.confirmation !== 'RESTAURER') return json(res, 400, { error:'Confirmation de restauration invalide.' });
-    const restored = await openEncryptedBackup(input.backup, input.passphrase); const currentConversations = await loadConversations(); const currentProjects = await loadProjects(); const currentTasks = await loadTasks();
-    try {
-      await saveAuth(restored.auth); await saveProjects(restored.projects); await saveTasks(restored.tasks); await saveConversations(restored.conversations);
-    } catch (error) {
-      await saveAuth(currentAuth).catch(() => {}); await saveProjects(currentProjects).catch(() => {}); await saveTasks(currentTasks).catch(() => {}); await saveConversations(currentConversations).catch(() => {});
-      throw Object.assign(new Error('Restauration interrompue ; les données précédentes ont été conservées.'), { status:500, cause:error });
-    }
+    const restored = await openEncryptedBackup(input.backup, input.passphrase);
+    await mutateStorageBundle(state => { state.auth = restored.auth; state.projects = restored.projects; state.tasks = restored.tasks; state.conversations = restored.conversations; });
     sessions.clear(); loginAttempts.clear(); pinAttempts.clear(); res.setHeader('set-cookie', sessionCookie('', 0));
     return json(res, 200, { ok:true, users:restored.auth.users.length, projects:restored.projects.length, tasks:restored.tasks.length, conversations:restored.conversations.length });
   }
@@ -670,27 +725,28 @@ async function api(req, res, url) {
   }
   if (adminUserMatch && req.method === 'DELETE') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
-    const input = await body(req); let deleted;
-    await mutateAuth((auth) => {
+    const input = await body(req);
+    const deleted = await mutateStorageBundle(({ auth, conversations, projects, tasks }) => {
       const administrator = auth.users.find(item => item.id === session.userId);
       if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
       const index = auth.users.findIndex(item => item.id === adminUserMatch[1]); const user = auth.users[index];
       if (!user) throw Object.assign(new Error('Compte introuvable.'), { status:404 });
       if (user.role === 'admin' || user.id === session.userId) throw Object.assign(new Error('Le compte administrateur principal ne peut pas être supprimé.'), { status:409 });
       if (String(input.username || '') !== user.username) throw Object.assign(new Error('Confirmez la suppression avec l’identifiant exact.'), { status:400 });
-      deleted = { id:user.id, profileIds:user.profiles.map(profile => profile.id) }; auth.users.splice(index, 1);
+      const removed = { id:user.id, profileIds:user.profiles.map(profile => profile.id) }; auth.users.splice(index, 1);
+      conversations.splice(0, conversations.length, ...conversations.filter(item => !removed.profileIds.includes(item.profileId)));
+      projects.splice(0, projects.length, ...projects.filter(item => !removed.profileIds.includes(item.profileId)));
+      tasks.splice(0, tasks.length, ...tasks.filter(item => !removed.profileIds.includes(item.profileId)));
+      return removed;
     });
     revokeUserSessions(deleted.id);
-    await mutateConversations((conversations) => { const kept = conversations.filter(item => !deleted.profileIds.includes(item.profileId)); conversations.splice(0, conversations.length, ...kept); });
-    await mutateProjects((projects) => { const kept = projects.filter(item => !deleted.profileIds.includes(item.profileId)); projects.splice(0, projects.length, ...kept); });
-    await mutateTasks((tasks) => { const kept = tasks.filter(item => !deleted.profileIds.includes(item.profileId)); tasks.splice(0, tasks.length, ...kept); });
     return json(res, 200, { ok:true });
   }
   const adminDeleteProfileMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})$/i);
   if (adminDeleteProfileMatch && req.method === 'DELETE') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
-    const input = await body(req); let deleted;
-    await mutateAuth((auth) => {
+    const input = await body(req);
+    const deleted = await mutateStorageBundle(({ auth, conversations, projects, tasks }) => {
       const administrator = auth.users.find(item => item.id === session.userId);
       if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
       const user = auth.users.find(item => item.id === adminDeleteProfileMatch[1]);
@@ -698,12 +754,13 @@ async function api(req, res, url) {
       if (!profile) throw Object.assign(new Error('Profil introuvable.'), { status:404 });
       if (user.profiles.length <= 1) throw Object.assign(new Error('Un compte doit conserver au moins un profil.'), { status:409 });
       if (String(input.name || '') !== profile.name) throw Object.assign(new Error('Confirmez la suppression avec le nom exact du profil.'), { status:400 });
-      deleted = { userId:user.id, profileId:profile.id }; user.profiles.splice(index, 1);
+      const removed = { userId:user.id, profileId:profile.id }; user.profiles.splice(index, 1);
+      conversations.splice(0, conversations.length, ...conversations.filter(item => item.profileId !== removed.profileId));
+      projects.splice(0, projects.length, ...projects.filter(item => item.profileId !== removed.profileId));
+      tasks.splice(0, tasks.length, ...tasks.filter(item => item.profileId !== removed.profileId));
+      return removed;
     });
     revokeUserSessions(deleted.userId, deleted.profileId);
-    await mutateConversations((conversations) => { const kept = conversations.filter(item => item.profileId !== deleted.profileId); conversations.splice(0, conversations.length, ...kept); });
-    await mutateProjects((projects) => { const kept = projects.filter(item => item.profileId !== deleted.profileId); projects.splice(0, projects.length, ...kept); });
-    await mutateTasks((tasks) => { const kept = tasks.filter(item => item.profileId !== deleted.profileId); tasks.splice(0, tasks.length, ...kept); });
     return json(res, 200, { ok:true });
   }
   const adminPinMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles\/([0-9a-f-]{36})\/pin$/i);
@@ -795,12 +852,12 @@ async function api(req, res, url) {
     return json(res, 200, { project });
   }
   if (projectMatch && req.method === 'DELETE') {
-    await mutateProjects(projects => {
+    await mutateStorageBundle(({ projects, conversations, tasks }) => {
       const index = projects.findIndex(project => project.id === projectMatch[1] && project.profileId === session.profileId);
       if (index < 0) throw Object.assign(new Error('Projet introuvable.'), { status:404 }); projects.splice(index, 1);
+      for (const item of conversations) if (item.profileId === session.profileId && item.projectId === projectMatch[1]) item.projectId = null;
+      for (const item of tasks) if (item.profileId === session.profileId && item.projectId === projectMatch[1]) item.projectId = null;
     });
-    await mutateConversations(conversations => { for (const item of conversations) if (item.profileId === session.profileId && item.projectId === projectMatch[1]) item.projectId = null; });
-    await mutateTasks(tasks => { for (const item of tasks) if (item.profileId === session.profileId && item.projectId === projectMatch[1]) item.projectId = null; });
     return json(res, 200, { ok:true });
   }
   if (url.pathname === '/api/search' && req.method === 'GET') {

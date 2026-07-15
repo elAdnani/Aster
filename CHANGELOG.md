@@ -17,6 +17,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Projets persistants chiffrés par profil, déplacement des conversations et recherche serveur isolée.
 - Planification chiffrée par profil avec échéances, tâches terminées et rattachement aux projets.
 - Catalogue Gemma 4 vérifié, détection des variantes installées et installation Ollama explicite avec progression.
+- File d’écriture globale et journal de transaction récupérable pour les mutations touchant plusieurs stockages.
 - CI Node 20/22/24, CodeQL et processus de publication.
 
 ### Sécurité
