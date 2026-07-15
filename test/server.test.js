@@ -172,6 +172,22 @@ test('sets up an admin and manages a secure cookie session', async () => {
   });
   assert.equal(duplicate.status, 409);
 
+  const secondLogin = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method:'POST', headers:{ 'content-type':'application/json', 'user-agent':'AsterMobile Android' }, body:JSON.stringify({ username:'admin', password:'a-strong-local-password' })
+  });
+  assert.equal(secondLogin.status, 200); const secondCookie = secondLogin.headers.get('set-cookie').split(';')[0];
+  const sessionResponse = await fetch(`http://127.0.0.1:${port}/api/auth/sessions`, { headers:{ cookie, 'user-agent':'Full identifying agent must not be retained' } });
+  const sessionBody = await sessionResponse.json();
+  assert.equal(sessionBody.sessions.length, 2);
+  assert.equal(sessionBody.sessions.filter(item => item.current).length, 1);
+  assert.equal(sessionBody.sessions.some(item => item.device === 'Mobile · Android'), true);
+  assert.doesNotMatch(JSON.stringify(sessionBody), /Full identifying agent|127\.0\.0\.1|test-token/);
+  const secondSession = sessionBody.sessions.find(item => !item.current);
+  const revoked = await fetch(`http://127.0.0.1:${port}/api/auth/sessions/${secondSession.id}`, { method:'DELETE', headers:{ cookie } });
+  assert.equal(revoked.status, 200);
+  const revokedStatus = await fetch(`http://127.0.0.1:${port}/api/auth/status`, { headers:{ cookie:secondCookie } });
+  assert.equal((await revokedStatus.json()).authenticated, false);
+
   const logout = await fetch(`http://127.0.0.1:${port}/api/auth/logout`, { method:'POST', headers:{ cookie } });
   assert.equal(logout.status, 200);
   const afterLogout = await fetch(`http://127.0.0.1:${port}/api/auth/status`, { headers:{ cookie } });

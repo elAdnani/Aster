@@ -128,7 +128,19 @@ function sessionFor(req) {
   const session = sessions.get(token);
   if (!session) return null;
   if (session.expiresAt <= Date.now()) { sessions.delete(token); return null; }
+  session.lastSeenAt = Date.now();
   return session;
+}
+
+function deviceCategory(req) {
+  const agent = String(req.headers['user-agent'] || '').toLowerCase();
+  const form = /android|iphone|ipad|mobile/.test(agent) ? 'Mobile' : 'Ordinateur';
+  const system = /windows/.test(agent) ? 'Windows' : /iphone|ipad|ios/.test(agent) ? 'iOS' : /android/.test(agent) ? 'Android' : /mac os|macintosh/.test(agent) ? 'macOS' : /linux/.test(agent) ? 'Linux' : 'Navigateur';
+  return `${form} · ${system}`;
+}
+
+function publicSession(session, current) {
+  return { id:session.id, device:session.device, createdAt:new Date(session.createdAt).toISOString(), lastSeenAt:new Date(session.lastSeenAt).toISOString(), expiresAt:new Date(session.expiresAt).toISOString(), current };
 }
 
 function sessionCookie(token, maxAge = Math.floor(SESSION_MS / 1000)) {
@@ -309,9 +321,10 @@ async function decryptConversation(record) {
   }
 }
 
-function startSession(res, user, profileId) {
+function startSession(req, res, user, profileId) {
   const token = randomBytes(32).toString('base64url');
-  const session = { userId:user.id, role:user.role, profileId, expiresAt:Date.now() + SESSION_MS };
+  const now = Date.now();
+  const session = { id:randomUUID(), userId:user.id, role:user.role, profileId, device:deviceCategory(req), createdAt:now, lastSeenAt:now, expiresAt:now + SESSION_MS };
   sessions.set(token, session);
   res.setHeader('set-cookie', sessionCookie(token));
   return session;
@@ -583,7 +596,7 @@ async function api(req, res, url) {
       if (auth.users.length) throw Object.assign(new Error('Un administrateur existe déjà.'), { status:409 });
       auth.users.push(user);
     });
-    startSession(res, user, null);
+    startSession(req, res, user, null);
     return json(res, 201, { user:publicUser(user), profiles:user.profiles.map(publicProfile), profile:null });
   }
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
@@ -594,7 +607,7 @@ async function api(req, res, url) {
     if (!user || !(await passwordMatches(input.password, user))) return json(res, 401, { error:'Identifiants incorrects.' });
     if (user.suspended) return json(res, 403, { error:'Compte suspendu par l’administrateur.' });
     loginAttempts.delete(req.socket.remoteAddress || 'unknown');
-    startSession(res, user, null);
+    startSession(req, res, user, null);
     return json(res, 200, { user:publicUser(user), profiles:user.profiles.map(publicProfile), profile:null });
   }
   if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
@@ -611,6 +624,27 @@ async function api(req, res, url) {
   }
   let session = sessionFor(req);
   if (!session) return json(res, 401, { error:'Authentification requise.' });
+  if (url.pathname === '/api/auth/sessions' && req.method === 'GET') {
+    if (session.userId === 'remote') return json(res, 200, { sessions:[] });
+    const currentToken = cookie(req, 'aster_session');
+    const active = [...sessions.entries()].filter(([,item]) => item.userId === session.userId && item.expiresAt > Date.now()).map(([token,item]) => publicSession(item, token === currentToken)).sort((a,b) => Number(b.current)-Number(a.current) || b.lastSeenAt.localeCompare(a.lastSeenAt));
+    return json(res, 200, { sessions:active });
+  }
+  const sessionMatch = url.pathname.match(/^\/api\/auth\/sessions\/([0-9a-f-]{36})$/i);
+  if (sessionMatch && req.method === 'DELETE') {
+    if (session.userId === 'remote') return json(res, 403, { error:'Session distante fixe.' });
+    const entry = [...sessions.entries()].find(([,item]) => item.id === sessionMatch[1] && item.userId === session.userId);
+    if (!entry) return json(res, 404, { error:'Session introuvable.' });
+    sessions.delete(entry[0]); const current = entry[0] === cookie(req, 'aster_session');
+    if (current) res.setHeader('set-cookie', sessionCookie('', 0));
+    return json(res, 200, { ok:true, current });
+  }
+  if (url.pathname === '/api/auth/sessions' && req.method === 'DELETE') {
+    if (session.userId === 'remote') return json(res, 403, { error:'Session distante fixe.' });
+    const currentToken = cookie(req, 'aster_session'); let revoked = 0;
+    for (const [token,item] of sessions) if (item.userId === session.userId && token !== currentToken) { sessions.delete(token); revoked += 1; }
+    return json(res, 200, { ok:true, revoked });
+  }
   if (url.pathname === '/api/auth/profile' && req.method === 'POST') {
     if (session.userId === 'remote') return json(res, 400, { error:'Profil distant fixe.' });
     const auth = await loadAuth(); const user = auth.users.find(item => item.id === session.userId);
