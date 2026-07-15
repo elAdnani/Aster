@@ -240,6 +240,20 @@ test('logs in locally and isolates conversations by profile', async () => {
   });
   assert.equal(created.status, 201);
   const localConversation = await created.json();
+  const projectCreated = await fetch(`http://127.0.0.1:${port}/api/projects`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ name:'Projet secret' })
+  });
+  assert.equal(projectCreated.status, 201);
+  const project = (await projectCreated.json()).project;
+  const moved = await fetch(`http://127.0.0.1:${port}/api/conversations/${localConversation.id}`, {
+    method:'PATCH', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ projectId:project.id })
+  });
+  assert.equal((await moved.json()).projectId, project.id);
+  const search = await fetch(`http://127.0.0.1:${port}/api/search?q=locale`, { headers:{ cookie } });
+  assert.deepEqual((await search.json()).results.map(item => item.id), [localConversation.id]);
+  const remoteProjects = await fetch(`http://127.0.0.1:${port}/api/projects`, { headers:auth });
+  assert.deepEqual((await remoteProjects.json()).projects, []);
+  assert.doesNotMatch(await readFile(join(dataDir, 'projects.json'), 'utf8'), /Projet secret/);
 
   const ownList = await fetch(`http://127.0.0.1:${port}/api/conversations`, { headers:{ cookie } });
   assert.equal((await ownList.json()).conversations.length, 1);
@@ -282,12 +296,15 @@ test('logs in locally and isolates conversations by profile', async () => {
     method:'DELETE', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ name:removedProfile.name })
   });
   assert.equal(deletedProfile.status, 200);
+  assert.equal(JSON.parse(await readFile(join(dataDir, 'conversations.json'), 'utf8')).some(item => item.profileId === removedProfile.id), false);
   const revokedProfileSession = await fetch(`http://127.0.0.1:${port}/api/conversations`, { headers:{ cookie:memberCookie } });
   assert.equal(revokedProfileSession.status, 401);
   const deletedUser = await fetch(`http://127.0.0.1:${port}/api/admin/users/${member.id}`, {
     method:'DELETE', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ username:'membre' })
   });
   assert.equal(deletedUser.status, 200);
+  const memberProfileIds = new Set(memberLoginBody.profiles.map(profile => profile.id));
+  assert.equal(JSON.parse(await readFile(join(dataDir, 'conversations.json'), 'utf8')).some(item => memberProfileIds.has(item.profileId)), false);
   const finalOverview = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
   assert.equal((await finalOverview.json()).users.length, 2);
   const backupResponse = await fetch(`http://127.0.0.1:${port}/api/admin/backup`, {
@@ -312,10 +329,24 @@ test('logs in locally and isolates conversations by profile', async () => {
   const restoredBody = await restored.json();
   assert.equal(restored.status, 200, JSON.stringify(restoredBody));
   assert.equal(restoredBody.conversations, 1);
+  assert.equal(restoredBody.projects, 1);
   const revokedAfterRestore = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
   assert.equal(revokedAfterRestore.status, 401);
   const loginAfterRestore = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
     method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ username:'ADMIN', password:'a-strong-local-password' })
   });
   assert.equal(loginAfterRestore.status, 200);
+  const restoredCookie = loginAfterRestore.headers.get('set-cookie').split(';')[0]; const restoredLoginBody = await loginAfterRestore.json();
+  const restoredSelected = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
+    method:'POST', headers:{ cookie:restoredCookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:restoredLoginBody.profiles[0].id, pin:'2468' })
+  });
+  assert.equal(restoredSelected.status, 200);
+  const renamedProject = await fetch(`http://127.0.0.1:${port}/api/projects/${project.id}`, {
+    method:'PATCH', headers:{ cookie:restoredCookie, 'content-type':'application/json' }, body:JSON.stringify({ name:'Projet restauré' })
+  });
+  assert.equal((await renamedProject.json()).project.name, 'Projet restauré');
+  const deletedProject = await fetch(`http://127.0.0.1:${port}/api/projects/${project.id}`, { method:'DELETE', headers:{ cookie:restoredCookie } });
+  assert.equal(deletedProject.status, 200);
+  const conversationWithoutProject = await fetch(`http://127.0.0.1:${port}/api/conversations/${localConversation.id}`, { headers:{ cookie:restoredCookie } });
+  assert.equal((await conversationWithoutProject.json()).projectId, null);
 });

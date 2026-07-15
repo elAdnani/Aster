@@ -43,7 +43,7 @@ Le nom du modèle est configurable et n’est pas une dépendance du projet.
 
 - PWA responsive pour ordinateur et mobile.
 - Chat Ollama en streaming, arrêt de génération et historique persistant.
-- Recherche visuelle, renommage, suppression et amorces Projets/Planification.
+- Projets chiffrés persistants, déplacement des conversations et recherche serveur dans les titres et messages.
 - Comptes administrateur/utilisateur, sélection de profils et déconnexion.
 - PIN de profil haché avec scrypt et essais limités.
 - Isolation serveur des conversations par profil.
@@ -76,8 +76,8 @@ Les pull requests exécutent les tests sur Node 20, 22 et 24 ainsi que CodeQL. V
 ## Feuille de route
 
 1. coffre natif du système pour la clé de chiffrement locale ;
-2. stockage transactionnel léger et recherche plein texte ;
-3. projets/dossiers persistants, pièces jointes et planification ;
+2. stockage transactionnel léger et index de recherche plein texte ;
+3. pièces jointes et planification persistante ;
 4. runtime de skills sandboxé et permissions explicites ;
 5. accès distant HTTPS authentifié par compte et profil ;
 6. packaging desktop puis validation mobile.
