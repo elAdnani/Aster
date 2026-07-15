@@ -2,6 +2,14 @@
 
 Toutes les évolutions importantes d’Aster Local sont documentées ici. Le projet suit SemVer pour ses préversions.
 
+## [Unreleased]
+
+### Sécurité
+
+- Rotation du cookie de session lors de la sélection d’un profil.
+- Expiration serveur après 12 heures d’inactivité, sans prolonger la durée absolue de sept jours.
+- Plafond de dix sessions actives par compte avec révocation de la plus ancienne.
+
 ## [0.2.0-alpha.3] - 2026-07-15
 
 ### Ajouté

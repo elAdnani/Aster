@@ -26,6 +26,10 @@ const pinAttempts = new Map();
 const inferenceQueues = new Map();
 const modelPulls = new Set();
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
+const requestedSessionIdle = Number(process.env.ASTER_SESSION_IDLE_MS);
+const SESSION_IDLE_MS = Number.isFinite(requestedSessionIdle) && requestedSessionIdle >= 100 ? Math.min(requestedSessionIdle, SESSION_MS) : 12 * 60 * 60 * 1000;
+const requestedMaxSessions = Number(process.env.ASTER_MAX_USER_SESSIONS);
+const MAX_USER_SESSIONS = Number.isInteger(requestedMaxSessions) ? Math.max(2, Math.min(50, requestedMaxSessions)) : 10;
 const SCRYPT_OPTIONS = { N:131072, r:8, p:1, maxmem:256 * 1024 * 1024 };
 const MAX_CONVERSATIONS = 500;
 const MAX_MESSAGES = 200;
@@ -127,8 +131,9 @@ function sessionFor(req) {
   const token = cookie(req, 'aster_session');
   const session = sessions.get(token);
   if (!session) return null;
-  if (session.expiresAt <= Date.now()) { sessions.delete(token); return null; }
-  session.lastSeenAt = Date.now();
+  const now = Date.now();
+  if (session.expiresAt <= now || now - session.lastSeenAt > SESSION_IDLE_MS) { sessions.delete(token); return null; }
+  session.lastSeenAt = now;
   return session;
 }
 
@@ -140,7 +145,7 @@ function deviceCategory(req) {
 }
 
 function publicSession(session, current) {
-  return { id:session.id, device:session.device, createdAt:new Date(session.createdAt).toISOString(), lastSeenAt:new Date(session.lastSeenAt).toISOString(), expiresAt:new Date(session.expiresAt).toISOString(), current };
+  return { id:session.id, device:session.device, createdAt:new Date(session.createdAt).toISOString(), lastSeenAt:new Date(session.lastSeenAt).toISOString(), expiresAt:new Date(session.expiresAt).toISOString(), idleExpiresAt:new Date(Math.min(session.expiresAt, session.lastSeenAt + SESSION_IDLE_MS)).toISOString(), current };
 }
 
 function sessionCookie(token, maxAge = Math.floor(SESSION_MS / 1000)) {
@@ -325,9 +330,17 @@ function startSession(req, res, user, profileId) {
   const token = randomBytes(32).toString('base64url');
   const now = Date.now();
   const session = { id:randomUUID(), userId:user.id, role:user.role, profileId, device:deviceCategory(req), createdAt:now, lastSeenAt:now, expiresAt:now + SESSION_MS };
+  const existing = [...sessions.entries()].filter(([,item]) => item.userId === user.id).sort((a,b) => a[1].createdAt - b[1].createdAt);
+  while (existing.length >= MAX_USER_SESSIONS) sessions.delete(existing.shift()[0]);
   sessions.set(token, session);
   res.setHeader('set-cookie', sessionCookie(token));
   return session;
+}
+
+function rotateSession(req, res, session) {
+  const previous = cookie(req, 'aster_session'); const token = randomBytes(32).toString('base64url');
+  sessions.delete(previous); session.lastSeenAt = Date.now(); sessions.set(token, session);
+  res.setHeader('set-cookie', sessionCookie(token, Math.max(1, Math.floor((session.expiresAt - Date.now()) / 1000))));
 }
 
 async function body(req, limit = 2_000_000) {
@@ -627,7 +640,7 @@ async function api(req, res, url) {
   if (url.pathname === '/api/auth/sessions' && req.method === 'GET') {
     if (session.userId === 'remote') return json(res, 200, { sessions:[] });
     const currentToken = cookie(req, 'aster_session');
-    const active = [...sessions.entries()].filter(([,item]) => item.userId === session.userId && item.expiresAt > Date.now()).map(([token,item]) => publicSession(item, token === currentToken)).sort((a,b) => Number(b.current)-Number(a.current) || b.lastSeenAt.localeCompare(a.lastSeenAt));
+    const now = Date.now(); const active = [...sessions.entries()].filter(([,item]) => item.userId === session.userId && item.expiresAt > now && now - item.lastSeenAt <= SESSION_IDLE_MS).map(([token,item]) => publicSession(item, token === currentToken)).sort((a,b) => Number(b.current)-Number(a.current) || b.lastSeenAt.localeCompare(a.lastSeenAt));
     return json(res, 200, { sessions:active });
   }
   const sessionMatch = url.pathname.match(/^\/api\/auth\/sessions\/([0-9a-f-]{36})$/i);
@@ -658,6 +671,7 @@ async function api(req, res, url) {
       pinAttempts.delete(attemptKey);
     }
     session.profileId = profile.id;
+    rotateSession(req, res, session);
     return json(res, 200, { profile:publicProfile(profile) });
   }
   if (url.pathname === '/api/admin/profiles' && req.method === 'POST') {
