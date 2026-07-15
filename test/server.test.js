@@ -1,20 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const port = 4399;
 let child;
 let dataDir;
+let ollamaServer;
+let activeInference = 0;
+let maxObservedInference = 0;
 const auth = { authorization:'Bearer test-token' };
 
 test.before(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'aster-test-'));
+  ollamaServer = createServer((req, res) => {
+    if (req.url === '/api/tags') { res.writeHead(200, { 'content-type':'application/json' }); return res.end(JSON.stringify({ models:[{ name:'allowed-local-model', size:1 }] })); }
+    if (req.url === '/api/chat') {
+      activeInference += 1; maxObservedInference = Math.max(maxObservedInference, activeInference);
+      setTimeout(() => { res.writeHead(200, { 'content-type':'application/x-ndjson' }); res.end(`${JSON.stringify({ message:{ content:'ok' } })}\n`); activeInference -= 1; }, 120);
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  await new Promise(resolve => ollamaServer.listen(4400, '127.0.0.1', resolve));
   child = spawn(process.execPath, ['server/index.js'], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, PORT:String(port), HOST:'127.0.0.1', ASTER_REMOTE_TOKEN:'test-token', OLLAMA_URL:'http://127.0.0.1:59999', ASTER_DATA_DIR:dataDir },
+    env: { ...process.env, PORT:String(port), HOST:'127.0.0.1', ASTER_REMOTE_TOKEN:'test-token', OLLAMA_URL:'http://127.0.0.1:4400', ASTER_DATA_DIR:dataDir },
     stdio:'ignore'
   });
   for (let i=0;i<30;i++) {
@@ -24,7 +38,7 @@ test.before(async () => {
   throw new Error('Server did not start');
 });
 
-test.after(async () => { child?.kill(); await rm(dataDir, { recursive:true, force:true }); });
+test.after(async () => { child?.kill(); await new Promise(resolve => ollamaServer?.close(resolve)); await rm(dataDir, { recursive:true, force:true }); });
 
 test('serves the application shell', async () => {
   const response = await fetch(`http://127.0.0.1:${port}/`);
@@ -61,8 +75,19 @@ test('persists conversations through the REST lifecycle', async () => {
     method:'PATCH', headers:{ ...auth, 'content-type':'application/json' }, body:JSON.stringify({ title:'Titre modifié' })
   });
   assert.equal((await updated.json()).title, 'Titre modifié');
-  const stored = JSON.parse(await readFile(join(dataDir, 'conversations.json'), 'utf8'));
-  assert.equal(stored[0].title, 'Titre modifié');
+  const storedText = await readFile(join(dataDir, 'conversations.json'), 'utf8');
+  const stored = JSON.parse(storedText);
+  assert.equal(stored[0].encrypted.version, 1);
+  assert.equal(stored[0].title, undefined);
+  assert.doesNotMatch(storedText, /Titre modifié|Bonjour/);
+  assert.equal((await readFile(join(dataDir, 'storage.key'))).length, 32);
+
+  const originalData = stored[0].encrypted.data;
+  stored[0].encrypted.data = `${originalData[0] === 'A' ? 'B' : 'A'}${originalData.slice(1)}`;
+  await writeFile(join(dataDir, 'conversations.json'), JSON.stringify(stored));
+  const tampered = await fetch(`http://127.0.0.1:${port}/api/conversations/${created.id}`, { headers:auth });
+  assert.equal(tampered.status, 500);
+  await writeFile(join(dataDir, 'conversations.json'), storedText);
 
   const fetched = await fetch(`http://127.0.0.1:${port}/api/conversations/${created.id}`, { headers:auth });
   assert.equal((await fetched.json()).messages[0].content, 'Bonjour');
@@ -98,7 +123,8 @@ test('sets up an admin and manages a secure cookie session', async () => {
   const status = await fetch(`http://127.0.0.1:${port}/api/auth/status`, { headers:{ cookie } });
   const statusBody = await status.json();
   assert.equal(statusBody.authenticated, true);
-  assert.equal(statusBody.profile.id, setupBody.profile.id);
+  assert.equal(statusBody.profile, null);
+  assert.equal(statusBody.profiles[0].id, setupBody.profiles[0].id);
   const authStore = await readFile(join(dataDir, 'auth.json'), 'utf8');
   assert.doesNotMatch(authStore, /a-strong-local-password/);
   assert.match(authStore, /passwordHash/);
@@ -126,6 +152,9 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal(login.status, 200);
   const cookie = login.headers.get('set-cookie').split(';')[0];
   const loginBody = await login.json();
+  const adminProfile = loginBody.profiles[0];
+  const beforeProfile = await fetch(`http://127.0.0.1:${port}/api/conversations`, { headers:{ cookie } });
+  assert.equal(beforeProfile.status, 403);
   const configured = await fetch(`http://127.0.0.1:${port}/api/admin/config`, {
     method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ installationMode:'family' })
   });
@@ -143,10 +172,68 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal((await addedProfile.json()).profiles.length, 2);
   const overview = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
   assert.equal((await overview.json()).users.length, 2);
+  const concurrentUsers = await Promise.all(['membre2','membre3'].map(username => fetch(`http://127.0.0.1:${port}/api/admin/users`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' },
+    body:JSON.stringify({ username, password:'concurrent-strong-password', profileName:'Personnel' })
+  })));
+  assert.deepEqual(concurrentUsers.map(response => response.status).sort(), [201, 409]);
+  const concurrentProfiles = await Promise.all(['Loisirs','Études','Invité'].map(name => fetch(`http://127.0.0.1:${port}/api/admin/users/${member.id}/profiles`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ name })
+  })));
+  assert.deepEqual(concurrentProfiles.map(response => response.status).sort(), [201, 201, 409]);
+  const hardenedOverview = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
+  const hardenedBody = await hardenedOverview.json();
+  assert.equal(hardenedBody.users.length, 3);
+  assert.equal(hardenedBody.users.find(user => user.id === member.id).profiles.length, 4);
+  assert.doesNotMatch(JSON.stringify(hardenedBody), /pinHash|pinSalt|passwordHash|passwordSalt/);
+  const pinConfigured = await fetch(`http://127.0.0.1:${port}/api/admin/users/${loginBody.user.id}/profiles/${adminProfile.id}/pin`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ pin:'2468' })
+  });
+  assert.equal(pinConfigured.status, 200);
+  assert.equal((await pinConfigured.json()).profile.pinRequired, true);
+  const wrongPin = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:adminProfile.id, pin:'0000' })
+  });
+  assert.equal(wrongPin.status, 401);
   const selected = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
-    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:loginBody.profile.id })
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:adminProfile.id, pin:'2468' })
   });
   assert.equal(selected.status, 200);
+  const policySaved = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, {
+    method:'PUT', headers:{ cookie, 'content-type':'application/json' },
+    body:JSON.stringify({ allowedModels:['allowed-local-model'], allowedSkills:['writing'], rules:'Répondre brièvement.', parallelRequests:1 })
+  });
+  assert.equal(policySaved.status, 200);
+  const policyRead = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, { headers:{ cookie } });
+  assert.deepEqual((await policyRead.json()).policy.allowedModels, ['allowed-local-model']);
+  const memberPolicy = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, {
+    method:'PUT', headers:{ cookie, 'content-type':'application/json' },
+    body:JSON.stringify({ userId:member.id, profileId:member.profiles[0].id, allowedModels:['member-model'], allowedSkills:[], rules:'Règles membre.', parallelRequests:1 })
+  });
+  assert.equal(memberPolicy.status, 200);
+  const memberPolicyRead = await fetch(`http://127.0.0.1:${port}/api/admin/policy?userId=${member.id}&profileId=${member.profiles[0].id}`, { headers:{ cookie } });
+  assert.deepEqual((await memberPolicyRead.json()).policy.allowedModels, ['member-model']);
+  const deniedModel = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ model:'gemma4:12b', messages:[] })
+  });
+  assert.equal(deniedModel.status, 403);
+  const chatRequest = () => fetch(`http://127.0.0.1:${port}/api/chat`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ model:'allowed-local-model', messages:[{ role:'user', content:'test' }] })
+  }).then(async response => { assert.equal(response.status, 200); await response.text(); return Number(response.headers.get('x-aster-queue-wait-ms')); });
+  maxObservedInference = 0;
+  const waits = await Promise.all([chatRequest(), chatRequest()]);
+  assert.equal(maxObservedInference, 1);
+  assert.ok(Math.max(...waits) >= 80);
+  const parallelPolicy = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, {
+    method:'PUT', headers:{ cookie, 'content-type':'application/json' },
+    body:JSON.stringify({ allowedModels:['allowed-local-model'], allowedSkills:['writing'], rules:'Répondre brièvement.', parallelRequests:2 })
+  });
+  assert.equal(parallelPolicy.status, 200);
+  maxObservedInference = 0;
+  await Promise.all([chatRequest(), chatRequest()]);
+  assert.equal(maxObservedInference, 2);
+  const inferenceStatus = await fetch(`http://127.0.0.1:${port}/api/inference/status`, { headers:{ cookie } });
+  assert.deepEqual(await inferenceStatus.json(), { active:0, queued:0 });
   const created = await fetch(`http://127.0.0.1:${port}/api/conversations`, {
     method:'POST', headers:{ cookie, 'content-type':'application/json' },
     body:JSON.stringify({ title:'Conversation locale', messages:[] })

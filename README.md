@@ -1,42 +1,88 @@
 # ✦ Aster Local
 
-Your AI, your files, your machine — available everywhere only when you decide.
+**Votre IA quotidienne, sur votre machine, accessible à distance seulement lorsque vous le décidez.**
 
-Aster Local is an open-source, local-first AI workspace inspired by the ease of ChatGPT and the project mindset of Codex. Version 0.1 is a deliberately safe vertical slice: a polished installable web app, streamed conversations, persistent local history and an Ollama adapter with `gemma4:12b` as the default.
+Aster Local est un espace IA open source et local-first inspiré par la simplicité de ChatGPT, l’organisation en projets de Codex et la gestion de profils de Netflix. Cette version est une **alpha expérimentale** : le chat local et les protections principales fonctionnent, mais l’accès Internet n’est pas encore prêt pour un usage public.
 
-## Run it
+## Pourquoi Aster
 
-Requirements: Node.js 20+, [Ollama](https://ollama.com/) and enough memory for the model you choose.
+- Léger : aucun framework serveur, aucune dépendance npm d’exécution et environ 0,23 Mio de sources hors Git et données.
+- Local : le serveur écoute uniquement `127.0.0.1` par défaut et contacte seulement l’instance Ollama configurée.
+- Privé : conversations chiffrées AES-256-GCM, clés dérivées par profil, aucune télémétrie.
+- Familial : jusqu’à 3 comptes et 4 profils par compte selon la configuration administrateur.
+- Contrôlé : PIN optionnel, modèles autorisés, règles système et parallélisme appliqués côté serveur.
+- Flexible : compatible avec les modèles exposés par Ollama ; Gemma peut être choisi sans être téléchargé ni imposé par Aster.
+
+## Démarrage
+
+Prérequis : Node.js 20+ et [Ollama](https://ollama.com/) si vous souhaitez converser avec un modèle local.
 
 ```powershell
-ollama pull gemma4:12b
 npm.cmd start
 ```
 
-Open `http://127.0.0.1:4317`. No package installation is required for this MVP.
+Ouvrez ensuite <http://127.0.0.1:4317>. Aucun `npm install` n’est nécessaire.
 
-## Privacy and remote access
+Au premier démarrage :
 
-The server binds to `127.0.0.1` by default. Conversation history is stored in `data/conversations.json`, with browser storage as an offline fallback. Aster has no analytics and makes no cloud request; only the configured Ollama endpoint is contacted.
+1. créez le compte administrateur local ;
+2. choisissez l’organisation Personnel, Foyer ou Personnalisé ;
+3. sélectionnez un profil ;
+4. configurez les modèles autorisés dans Réglages → IA et capacités ;
+5. démarrez Ollama et installez séparément le modèle voulu.
 
-The interface supports renaming and deleting conversations, stopping a generation, importing/exporting JSON, selecting a model and installing itself as a PWA. `data/` is ignored by Git.
+Exemple, uniquement si ce modèle existe dans votre installation Ollama :
 
-Do not expose the port directly to the Internet. For remote use, prefer a private network such as Tailscale and set a strong `ASTER_REMOTE_TOKEN`. A guided, audited remote-access flow is planned before this feature is advertised as production-ready.
+```powershell
+ollama pull gemma4:12b
+```
 
-## Roadmap
+Le nom du modèle est configurable et n’est pas une dépendance du projet.
 
-- v0.1: local chat, streaming, PWA, model selection, privacy foundation.
-- v0.2: encrypted SQLite migration, attachments and conversation search.
-- v0.3: workspace-scoped read/edit with diffs and explicit approvals.
-- v0.4: sandboxed commands, action log and reversible checkpoints.
-- v0.5: desktop shell and guided authenticated private-network access.
+## Fonctions présentes
 
-See [PRODUCT.md](./PRODUCT.md), [SECURITY.md](./SECURITY.md), and [CONTRIBUTING.md](./CONTRIBUTING.md).
+- PWA responsive pour ordinateur et mobile.
+- Chat Ollama en streaming, arrêt de génération et historique persistant.
+- Recherche visuelle, renommage, suppression et amorces Projets/Planification.
+- Comptes administrateur/utilisateur, sélection de profils et déconnexion.
+- PIN de profil haché avec scrypt et essais limités.
+- Isolation serveur des conversations par profil.
+- Chiffrement authentifié des titres, messages et modèles au repos.
+- Règles système et allowlist de modèles appliquées par le service local.
+- File FIFO et limite de requêtes parallèles indépendantes par profil.
+- Export/import, VPN/Tor, plugins et skills affichés seulement comme préparations lorsqu’ils ne sont pas encore exécutables.
 
-Installation and privacy contracts: [docs/installation.md](./docs/installation.md) and [RULES.md](./RULES.md).
+## Sécurité et limites
 
-Account hierarchy, admin catalogs and hardware capacity presets are specified in [docs/accounts-and-capacity.md](./docs/accounts-and-capacity.md).
+Ne publiez jamais directement le port 4317 sur Internet. Le jeton distant actuel est une fondation technique globale, pas encore un système d’identité distant par profil. Aster ne fournit pas TLS, récupération de compte, coffre système pour la clé de stockage ni sandbox de plugins.
 
-## License
+Les fichiers privés sont placés dans `data/`, ignoré par Git. La clé `data/storage.key` doit être sauvegardée avec prudence : perdre cette clé rend les conversations chiffrées irrécupérables.
 
-Apache License 2.0. Model weights have their own terms and are never bundled.
+Consultez [SECURITY.md](./SECURITY.md), [RULES.md](./RULES.md) et le [rapport d’audit](./docs/AUDIT-REPORT.md) avant d’activer une fonction réseau.
+
+## Développement
+
+```powershell
+npm.cmd test
+npm.cmd run dev
+```
+
+- `main` : préversions vérifiées.
+- `develop` : intégration des lots testés.
+- `feature/*`, `fix/*`, `release/*` : changements isolés.
+
+Les pull requests exécutent les tests sur Node 20, 22 et 24 ainsi que CodeQL. Voir [CONTRIBUTING.md](./CONTRIBUTING.md) et le [processus de publication](./docs/release-process.md).
+
+## Feuille de route
+
+1. cycle de vie complet des comptes/profils et révocation des sessions ;
+2. coffre natif pour la clé de chiffrement et stratégie de sauvegarde/récupération ;
+3. stockage transactionnel léger et recherche plein texte ;
+4. projets/dossiers persistants, pièces jointes et planification ;
+5. runtime de skills sandboxé et permissions explicites ;
+6. accès distant HTTPS authentifié par compte et profil ;
+7. packaging desktop puis validation mobile.
+
+## Licence
+
+Apache License 2.0. Les modèles et leurs poids conservent leurs propres licences et ne sont jamais intégrés au dépôt.

@@ -14,13 +14,16 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - PWA responsive et installable.
 - Détection d’Ollama et catalogue des modèles installés.
 - Chat en streaming avec arrêt de génération.
-- Conversations persistantes avec création, lecture, renommage et suppression.
+- Conversations persistantes avec création, lecture, renommage, suppression et chiffrement AES-256-GCM.
 - Premier compte administrateur créé uniquement depuis la boucle locale.
 - Mots de passe hachés avec scrypt (`N=2^17`, `r=8`, `p=1`) et sel aléatoire.
 - Sessions aléatoires 256 bits dans un cookie `HttpOnly`, `SameSite=Strict`.
 - Connexion, déconnexion et sélection de profil.
+- PIN optionnel de 4 à 8 chiffres, haché avec scrypt et limité à cinq essais sur dix minutes.
 - Requêtes de conversations systématiquement filtrées par le profil actif.
 - Administration locale : choix Personnel/Foyer/Personnalisé, jusqu’à trois comptes et quatre profils par compte.
+- Politiques par profil appliquées côté serveur : modèles autorisés, règles système, skills déclarés et limite parallèle préparée.
+- File d’inférence FIFO par profil, avec parallélisme administrateur réellement appliqué, annulation et plafond de 25 attentes.
 - Création de comptes non administrateurs et ajout de profils par l’administrateur.
 - Recherche visuelle dans les conversations, amorces Projets, Planification, Plugins et Bibliothèque.
 - VPN, Proton VPN et Tor présentés uniquement comme options futures, jamais activés automatiquement.
@@ -30,7 +33,8 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - API métier fermée sans session ou jeton distant configuré.
 - Routes administrateur limitées au rôle `admin` et à une connexion loopback réelle.
 - Données et `.env` exclus de Git.
-- Écriture atomique des fichiers d’authentification et de conversations.
+- Écriture atomique des fichiers d’authentification et de conversations, avec mutations concurrentes sérialisées.
+- Clé de chiffrement distincte dérivée par profil via HKDF ; contenus et titres absents du JSON en clair.
 - Limites de taille sur les corps, messages et conversations.
 - Limitation basique des tentatives de connexion : huit essais par adresse sur dix minutes.
 - Vérification de l’origine des requêtes mutantes lorsque l’en-tête `Origin` est présent.
@@ -41,7 +45,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 ### Priorité critique avant accès Internet
 
-1. Les conversations et métadonnées sont enregistrées en JSON clair. Ajouter un chiffrement au repos avec clés séparées par profil et une stratégie de récupération.
+1. La clé maîtresse se trouve sur le même compte système que les données. Prévoir sauvegarde/récupération protégée et intégration au coffre de clés du système pour le packaging desktop.
 2. Le jeton distant est un secret global et ne représente pas un utilisateur. Remplacer par des sessions distantes authentifiées, révocables et limitées au profil.
 3. Le serveur ne fournit pas TLS. L’accès distant doit obligatoirement passer par un tunnel ou réseau privé audité avec HTTPS.
 4. Les comptes ne disposent pas encore de récupération de mot de passe, rotation des sessions, liste de sessions ni révocation par appareil.
@@ -50,19 +54,18 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 1. Les sessions sont en mémoire et disparaissent au redémarrage. C’est sûr mais peu pratique ; une persistance chiffrée et révocable sera nécessaire.
 2. Le stockage JSON deviendra fragile avec plusieurs requêtes et de gros historiques. Migrer vers SQLite avec contraintes d’appartenance et transactions.
-3. Les règles, skills, quotas, VPN et catalogue IA affichés ne sont pas tous appliqués côté serveur. Ne pas les présenter comme protections actives.
+3. Les règles, modèles et quotas parallèles sont appliqués côté serveur, mais les skills et routes VPN n’ont pas encore de moteur d’exécution. Ne pas les présenter comme capacités actives.
 4. La politique CSP autorise encore les scripts et styles inline pour conserver l’interface actuelle. Extraire le code inline afin de supprimer `unsafe-inline`.
 5. Aucun test navigateur automatisé complet, test mobile visuel, audit WCAG ou test de charge n’est encore présent.
 
 ### Fonctionnalités incomplètes
 
-- PIN de profil.
 - Suppression/suspension de compte et profil avec gestion des données associées.
 - Dossiers/projets persistants et déplacement des conversations.
 - Recherche serveur dans le contenu des messages.
 - Planification persistante.
 - Installation, permissions et sandbox des plugins/skills.
-- File d’attente et requêtes Ollama parallèles selon la RAM/VRAM.
+- Détection automatique RAM/VRAM pour recommander la limite parallèle ; la limite choisie est déjà appliquée.
 - Import/export réellement filtré et chiffré par profil.
 - Applications desktop/mobile natives et routage VPN par application.
 
