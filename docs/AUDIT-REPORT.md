@@ -12,7 +12,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 - Serveur Node.js sans dépendance externe, lié à `127.0.0.1` par défaut.
 - PWA responsive et installable.
-- Détection d’Ollama et catalogue des modèles installés.
+- Détection d’Ollama, catalogue Gemma 4 sourcé et installation locale explicite avec progression.
 - Chat en streaming avec arrêt de génération.
 - Conversations persistantes avec création, lecture, renommage, suppression et chiffrement AES-256-GCM.
 - Premier compte administrateur créé uniquement depuis la boucle locale.

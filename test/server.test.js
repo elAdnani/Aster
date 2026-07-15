@@ -12,12 +12,14 @@ let dataDir;
 let ollamaServer;
 let activeInference = 0;
 let maxObservedInference = 0;
+const pulledModels = new Set();
 const auth = { authorization:'Bearer test-token' };
 
 test.before(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'aster-test-'));
   ollamaServer = createServer((req, res) => {
-    if (req.url === '/api/tags') { res.writeHead(200, { 'content-type':'application/json' }); return res.end(JSON.stringify({ models:[{ name:'allowed-local-model', size:1 }] })); }
+    if (req.url === '/api/tags') { res.writeHead(200, { 'content-type':'application/json' }); return res.end(JSON.stringify({ models:[{ name:'allowed-local-model', size:1 }, ...[...pulledModels].map(name => ({ name, size:7_600_000_000 }))] })); }
+    if (req.url === '/api/pull' && req.method === 'POST') { pulledModels.add('gemma4:12b'); res.writeHead(200, { 'content-type':'application/x-ndjson' }); return res.end(`${JSON.stringify({ status:'pulling manifest' })}\n${JSON.stringify({ status:'downloading', completed:50, total:100 })}\n${JSON.stringify({ status:'success' })}\n`); }
     if (req.url === '/api/chat') {
       activeInference += 1; maxObservedInference = Math.max(maxObservedInference, activeInference);
       setTimeout(() => { res.writeHead(200, { 'content-type':'application/x-ndjson' }); res.end(`${JSON.stringify({ message:{ content:'ok' } })}\n`); activeInference -= 1; }, 120);
@@ -199,6 +201,21 @@ test('logs in locally and isolates conversations by profile', async () => {
     method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:adminProfile.id, pin:'2468' })
   });
   assert.equal(selected.status, 200);
+  const catalogBefore = await fetch(`http://127.0.0.1:${port}/api/admin/models/catalog`, { headers:{ cookie } });
+  const catalogBeforeBody = await catalogBefore.json();
+  assert.equal(catalogBeforeBody.engineAvailable, true);
+  assert.equal(catalogBeforeBody.models.find(model => model.name === 'gemma4:12b').installed, false);
+  const invalidPull = await fetch(`http://127.0.0.1:${port}/api/admin/models/pull`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ model:'unknown/model' })
+  });
+  assert.equal(invalidPull.status, 400);
+  const pull = await fetch(`http://127.0.0.1:${port}/api/admin/models/pull`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ model:'gemma4:12b' })
+  });
+  assert.equal(pull.status, 200);
+  assert.match(await pull.text(), /"status":"success"/);
+  const catalogAfter = await fetch(`http://127.0.0.1:${port}/api/admin/models/catalog`, { headers:{ cookie } });
+  assert.equal((await catalogAfter.json()).models.find(model => model.name === 'gemma4:12b').installed, true);
   const policySaved = await fetch(`http://127.0.0.1:${port}/api/admin/policy`, {
     method:'PUT', headers:{ cookie, 'content-type':'application/json' },
     body:JSON.stringify({ allowedModels:['allowed-local-model'], allowedSkills:['writing'], rules:'Répondre brièvement.', parallelRequests:1 })

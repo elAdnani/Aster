@@ -23,11 +23,18 @@ const sessions = new Map();
 const loginAttempts = new Map();
 const pinAttempts = new Map();
 const inferenceQueues = new Map();
+const modelPulls = new Set();
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const SCRYPT_OPTIONS = { N:131072, r:8, p:1, maxmem:256 * 1024 * 1024 };
 const MAX_CONVERSATIONS = 500;
 const MAX_MESSAGES = 200;
 const MAX_CONTENT = 100_000;
+const MODEL_CATALOG = [
+  { name:'gemma4:e2b', label:'Gemma 4 E2B', sizeBytes:7_200_000_000, context:131072, tier:'léger', modalities:['texte','image','audio'] },
+  { name:'gemma4:e4b', label:'Gemma 4 E4B', sizeBytes:9_600_000_000, context:131072, tier:'équilibré', modalities:['texte','image','audio'] },
+  { name:'gemma4:12b', label:'Gemma 4 12B', sizeBytes:7_600_000_000, context:262144, tier:'recommandé', modalities:['texte','image'] },
+  { name:'gemma4:26b', label:'Gemma 4 26B A4B', sizeBytes:18_000_000_000, context:262144, tier:'avancé', modalities:['texte','image'] }
+];
 const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json', '.svg':'image/svg+xml', '.webmanifest':'application/manifest+json' };
 let mutation = Promise.resolve();
 let authMutation = Promise.resolve();
@@ -549,6 +556,33 @@ async function api(req, res, url) {
     const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
     if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
     return json(res, 200, { installationMode:auth.installationMode, maxUsers:auth.installationMode === 'solo' ? 1 : 3, users:auth.users.map(user => publicUser(user, true)) });
+  }
+  if (url.pathname === '/api/admin/models/catalog' && req.method === 'GET') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Gestion des modèles autorisée uniquement en local.' });
+    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    let engineAvailable = false; let installed = [];
+    try { const response = await fetch(`${ollama}/api/tags`, { signal:AbortSignal.timeout(2500) }); if (response.ok) { engineAvailable = true; installed = (await response.json()).models || []; } } catch {}
+    const installedNames = new Set(installed.map(model => model.name));
+    return json(res, 200, { engineAvailable, pulling:[...modelPulls], models:MODEL_CATALOG.map(model => ({ ...model, installed:installedNames.has(model.name) })) });
+  }
+  if (url.pathname === '/api/admin/models/pull' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Installation des modèles autorisée uniquement en local.' });
+    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    const input = await body(req); const model = MODEL_CATALOG.find(item => item.name === String(input.model || ''));
+    if (!model) return json(res, 400, { error:'Modèle non reconnu dans le catalogue Aster.' });
+    if (modelPulls.has(model.name)) return json(res, 409, { error:'Ce modèle est déjà en cours d’installation.' });
+    modelPulls.add(model.name); const controller = new AbortController(); res.on('close', () => { if (!res.writableEnded) controller.abort(); });
+    try {
+      const upstream = await fetch(`${ollama}/api/pull`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ name:model.name, stream:true }), signal:controller.signal });
+      if (!upstream.ok || !upstream.body) { const detail = (await upstream.text().catch(() => '')).slice(0, 300); return json(res, 502, { error:detail || 'Ollama a refusé l’installation.' }); }
+      res.writeHead(200, { ...securityHeaders(), 'content-type':'application/x-ndjson; charset=utf-8', 'cache-control':'no-store', 'x-accel-buffering':'no' });
+      for await (const chunk of upstream.body) res.write(chunk); res.end(); return;
+    } catch (error) {
+      if (!res.headersSent) return json(res, 503, { error:error.name === 'AbortError' ? 'Installation interrompue.' : 'Ollama est indisponible.' });
+      res.end(); return;
+    } finally { modelPulls.delete(model.name); }
   }
   if (url.pathname === '/api/admin/backup' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Sauvegarde administrateur autorisée uniquement en local.' });

@@ -37,6 +37,8 @@ Exemple, uniquement si ce modèle existe dans votre installation Ollama :
 ollama pull gemma4:12b
 ```
 
+L’administrateur peut aussi lancer cette installation depuis le [catalogue local documenté](./docs/model-catalog.md). Aster demande toujours confirmation et n’installe rien en arrière-plan.
+
 Le nom du modèle est configurable et n’est pas une dépendance du projet.
 
 ## Fonctions présentes
