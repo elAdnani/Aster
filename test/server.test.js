@@ -46,7 +46,11 @@ test.after(async () => { child?.kill(); await new Promise(resolve => ollamaServe
 test('serves the application shell', async () => {
   const response = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(response.status, 200);
-  assert.match(await response.text(), /Aster Local/);
+  const csp = response.headers.get('content-security-policy'); const html = await response.text();
+  assert.match(html, /Aster Local/);
+  assert.doesNotMatch(csp, /unsafe-inline/);
+  assert.doesNotMatch(html, /<style>|<script>(?!\s*<\/script>)/i);
+  assert.match(html, /bootstrap\.js/);
 });
 
 test('protects API routes when a token is configured', async () => {

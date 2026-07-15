@@ -27,6 +27,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Administration limitée au rôle administrateur et aux connexions loopback.
 - Mutations des fichiers JSON sérialisées et écritures atomiques.
 - Fichiers traités comme texte non fiable, jamais comme HTML ou instructions système.
+- CSP stricte sans `unsafe-inline`, avec bootstrap et styles chargés depuis des fichiers locaux dédiés.
 - CSP, protection iframe, validation d’origine et limitation du login.
 - Suppression de l’adresse personnelle des métadonnées Git avant le premier push.
 
