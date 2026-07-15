@@ -8,6 +8,8 @@ Conversation payloads are encrypted at rest with AES-256-GCM. A 256-bit local ma
 
 Project names and planning-task contents use separate HKDF contexts and authenticated encryption for each profile. Deleting a profile removes its conversations, projects and tasks from their respective stores; deleting a project only detaches its conversations and tasks.
 
+All storage writes share one serialization queue. Multi-store deletion and restore operations create a permission-restricted rollback journal before the first replacement. Aster verifies each snapshot entry with SHA-256, restores it immediately on a write failure or before serving data after an interrupted process, and fails closed if the journal is incomplete or altered. The journal contains encrypted project/task/conversation records plus the already protected authentication store and is removed after commit.
+
 Full backups are available only to a loopback administrator. Their contents are encrypted with AES-256-GCM and a key derived from a user-provided passphrase using scrypt; the local storage key is never copied into the backup. Restore validates account ownership and conversation limits before replacing data, then revokes every session. See [the backup and restore guide](./docs/backup-restore.md).
 
 Profiles can be protected by an optional 4-to-8 digit PIN configured by the local administrator. PINs use the same memory-hard salted scrypt protection as account passwords. Profile selection starts locked after every account login or server restart, failed attempts are limited, and API responses expose only `pinRequired`, never PIN salts or hashes.

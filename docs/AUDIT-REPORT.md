@@ -35,7 +35,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - API métier fermée sans session ou jeton distant configuré.
 - Routes administrateur limitées au rôle `admin` et à une connexion loopback réelle.
 - Données et `.env` exclus de Git.
-- Écriture atomique des fichiers d’authentification et de conversations, avec mutations concurrentes sérialisées.
+- Écritures atomiques, file globale de mutations et journal de rollback multi-stockages récupéré automatiquement après interruption.
 - Clé de chiffrement distincte dérivée par profil via HKDF ; contenus et titres absents du JSON en clair.
 - Limites de taille sur les corps, messages et conversations.
 - Limitation basique des tentatives de connexion : huit essais par adresse sur dix minutes.

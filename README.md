@@ -47,6 +47,7 @@ Le nom du modèle est configurable et n’est pas une dépendance du projet.
 - Chat Ollama en streaming, arrêt de génération et historique persistant.
 - Projets chiffrés persistants, déplacement des conversations et recherche serveur dans les titres et messages.
 - Planification privée par profil avec tâches, échéances et rattachement facultatif à un projet.
+- Stockage JSON atomique avec [journal de transaction récupérable](./docs/storage-transactions.md) pour les opérations multi-fichiers.
 - Comptes administrateur/utilisateur, sélection de profils et déconnexion.
 - PIN de profil haché avec scrypt et essais limités.
 - Isolation serveur des conversations par profil.

@@ -61,6 +61,36 @@ test('does not expose paths outside the web root', async () => {
   assert.notEqual(response.status, 200);
 });
 
+test('recovers an interrupted multi-store transaction before serving data', async () => {
+  const recoveryDir = await mkdtemp(join(tmpdir(), 'aster-recovery-')); const recoveryPort = 4402;
+  const previousAuth = JSON.stringify({ version:1, installationMode:'solo', users:[{ id:'00000000-0000-4000-8000-000000000001', username:'recovered', role:'admin', profiles:[] }] });
+  await writeFile(join(recoveryDir, 'auth.json'), JSON.stringify({ version:1, installationMode:null, users:[] }));
+  const previousAuthBytes = Buffer.from(previousAuth); const previousAuthHash = (await import('node:crypto')).createHash('sha256').update(previousAuthBytes).digest('hex');
+  await writeFile(join(recoveryDir, 'transaction.json'), JSON.stringify({ version:1, stores:{ auth:{ data:previousAuthBytes.toString('base64'), sha256:previousAuthHash }, projects:null, tasks:null, conversations:null } }));
+  const recoveryChild = spawn(process.execPath, ['server/index.js'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(recoveryPort), HOST:'127.0.0.1', ASTER_DATA_DIR:recoveryDir }, stdio:'ignore' });
+  try {
+    let response;
+    for (let i=0;i<30;i++) { try { response = await fetch(`http://127.0.0.1:${recoveryPort}/api/auth/status`, { signal:AbortSignal.timeout(200) }); break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); } }
+    assert.ok(response); assert.equal((await response.json()).configured, true);
+    assert.equal(JSON.parse(await readFile(join(recoveryDir, 'auth.json'), 'utf8')).users[0].username, 'recovered');
+    await assert.rejects(readFile(join(recoveryDir, 'transaction.json')), { code:'ENOENT' });
+  } finally { recoveryChild.kill(); await rm(recoveryDir, { recursive:true, force:true }); }
+});
+
+test('fails closed when an interrupted transaction journal is altered', async () => {
+  const recoveryDir = await mkdtemp(join(tmpdir(), 'aster-recovery-bad-')); const recoveryPort = 4403;
+  const currentAuth = JSON.stringify({ version:1, installationMode:null, users:[] }); await writeFile(join(recoveryDir, 'auth.json'), currentAuth);
+  await writeFile(join(recoveryDir, 'transaction.json'), JSON.stringify({ version:1, stores:{ auth:{ data:Buffer.from(currentAuth).toString('base64'), sha256:'0'.repeat(64) }, projects:null, tasks:null, conversations:null } }));
+  const recoveryChild = spawn(process.execPath, ['server/index.js'], { cwd:new URL('..', import.meta.url), env:{ ...process.env, PORT:String(recoveryPort), HOST:'127.0.0.1', ASTER_DATA_DIR:recoveryDir }, stdio:'ignore' });
+  try {
+    let response;
+    for (let i=0;i<30;i++) { try { response = await fetch(`http://127.0.0.1:${recoveryPort}/api/auth/status`, { signal:AbortSignal.timeout(200) }); break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); } }
+    assert.ok(response); assert.equal(response.status, 500);
+    assert.deepEqual(JSON.parse(await readFile(join(recoveryDir, 'auth.json'), 'utf8')).users, []);
+    assert.equal((await readFile(join(recoveryDir, 'transaction.json'), 'utf8')).length > 0, true);
+  } finally { recoveryChild.kill(); await rm(recoveryDir, { recursive:true, force:true }); }
+});
+
 test('persists conversations through the REST lifecycle', async () => {
   const createdResponse = await fetch(`http://127.0.0.1:${port}/api/conversations`, {
     method:'POST', headers:{ ...auth, 'content-type':'application/json' },
