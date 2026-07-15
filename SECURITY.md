@@ -8,6 +8,8 @@ Conversation payloads are encrypted at rest with AES-256-GCM. A 256-bit local ma
 
 Profiles can be protected by an optional 4-to-8 digit PIN configured by the local administrator. PINs use the same memory-hard salted scrypt protection as account passwords. Profile selection starts locked after every account login or server restart, failed attempts are limited, and API responses expose only `pinRequired`, never PIN salts or hashes.
 
+Model allowlists and profile rules are persisted in the protected local authentication store and enforced by the server. A model omitted from a non-empty allowlist is rejected before any Ollama request. Profile rules are prepended as a system instruction by the trusted service instead of being accepted from browser-supplied system messages. Skill allowlists are persisted but do not grant capabilities until a separately sandboxed skill runtime exists.
+
 Aster is local-first, not magically safe. The v0.1 server listens on loopback by default and intentionally offers no shell or filesystem tools. Never bind it to a public interface without authentication and a trusted encrypted network.
 
 Report vulnerabilities privately to the future security contact before publishing details. Until a contact is configured, open a minimal GitHub issue asking maintainers for a private channel without including exploit details.

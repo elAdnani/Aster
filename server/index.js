@@ -250,6 +250,18 @@ function validateConversation(input, partial = false) {
   return output;
 }
 
+function validatePolicy(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw Object.assign(new Error('Politique invalide.'), { status:400 });
+  const allowedModels = Array.isArray(input.allowedModels) ? [...new Set(input.allowedModels.map(value => String(value).trim()).filter(Boolean))] : [];
+  const allowedSkills = Array.isArray(input.allowedSkills) ? [...new Set(input.allowedSkills.map(value => String(value).trim()).filter(Boolean))] : [];
+  const rules = String(input.rules || '').trim(); const parallelRequests = Number(input.parallelRequests || 1);
+  if (allowedModels.length > 20 || allowedModels.some(value => value.length > 120)) throw Object.assign(new Error('Liste de modèles invalide.'), { status:400 });
+  if (allowedSkills.length > 30 || allowedSkills.some(value => !/^[a-z0-9._-]{1,64}$/i.test(value))) throw Object.assign(new Error('Liste de skills invalide.'), { status:400 });
+  if (rules.length > 10_000) throw Object.assign(new Error('Les règles dépassent 10 000 caractères.'), { status:400 });
+  if (!Number.isInteger(parallelRequests) || parallelRequests < 1 || parallelRequests > 8) throw Object.assign(new Error('Limite parallèle invalide.'), { status:400 });
+  return { allowedModels, allowedSkills, rules, parallelRequests };
+}
+
 function mutateConversations(operation) {
   const next = mutation.then(async () => {
     const conversations = await loadConversations();
@@ -394,6 +406,28 @@ async function api(req, res, url) {
     });
     return json(res, 200, { profile:result });
   }
+  if (url.pathname === '/api/admin/policy' && req.method === 'GET') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
+    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
+    const targetUser = auth.users.find(item => item.id === (url.searchParams.get('userId') || session.userId));
+    const profile = targetUser?.profiles.find(item => item.id === (url.searchParams.get('profileId') || session.profileId));
+    if (!profile) return json(res, 409, { error:'Sélectionnez le profil à configurer.' });
+    return json(res, 200, { policy:profile.policy || { allowedModels:[], allowedSkills:[], rules:'', parallelRequests:1 } });
+  }
+  if (url.pathname === '/api/admin/policy' && req.method === 'PUT') {
+    if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
+    const input = await body(req); const policy = validatePolicy(input);
+    const saved = await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      const targetUser = auth.users.find(item => item.id === (String(input.userId || '') || session.userId));
+      const profile = targetUser?.profiles.find(item => item.id === (String(input.profileId || '') || session.profileId));
+      if (!profile) throw Object.assign(new Error('Sélectionnez le profil à configurer.'), { status:409 });
+      profile.policy = policy; return policy;
+    });
+    return json(res, 200, { policy:saved });
+  }
   if (session.userId !== 'remote' && !session.profileId) return json(res, 403, { error:'Sélectionnez un profil.' });
   const conversationMatch = url.pathname.match(/^\/api\/conversations\/([0-9a-f-]{36})$/i);
   if (url.pathname === '/api/conversations' && req.method === 'GET') {
@@ -450,7 +484,14 @@ async function api(req, res, url) {
   if (url.pathname === '/api/chat' && req.method === 'POST') {
     const input = await body(req);
     const model = String(input.model || 'gemma4:12b').slice(0, 120);
-    const messages = Array.isArray(input.messages) ? input.messages.slice(-80).map(m => ({ role:m.role, content:String(m.content || '').slice(0, 100_000) })) : [];
+    let policy = null;
+    if (session.userId !== 'remote') {
+      const auth = await loadAuth(); const user = auth.users.find(item => item.id === session.userId); const profile = user?.profiles.find(item => item.id === session.profileId);
+      policy = profile?.policy || null;
+      if (policy?.allowedModels?.length && !policy.allowedModels.includes(model)) return json(res, 403, { error:'Ce modèle n’est pas autorisé pour ce profil.' });
+    }
+    const messages = Array.isArray(input.messages) ? input.messages.slice(-80).filter(m => m && ['user','assistant','tool'].includes(m.role)).map(m => ({ role:m.role, content:String(m.content || '').slice(0, 100_000) })) : [];
+    if (policy?.rules) messages.unshift({ role:'system', content:policy.rules });
     const upstream = await fetch(`${ollama}/api/chat`, {
       method:'POST', headers:{ 'content-type':'application/json' },
       body:JSON.stringify({ model, messages, stream:true }), signal:req.signal

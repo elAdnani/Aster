@@ -22,6 +22,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 - PIN optionnel de 4 à 8 chiffres, haché avec scrypt et limité à cinq essais sur dix minutes.
 - Requêtes de conversations systématiquement filtrées par le profil actif.
 - Administration locale : choix Personnel/Foyer/Personnalisé, jusqu’à trois comptes et quatre profils par compte.
+- Politiques par profil appliquées côté serveur : modèles autorisés, règles système, skills déclarés et limite parallèle préparée.
 - Création de comptes non administrateurs et ajout de profils par l’administrateur.
 - Recherche visuelle dans les conversations, amorces Projets, Planification, Plugins et Bibliothèque.
 - VPN, Proton VPN et Tor présentés uniquement comme options futures, jamais activés automatiquement.
@@ -52,7 +53,7 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 1. Les sessions sont en mémoire et disparaissent au redémarrage. C’est sûr mais peu pratique ; une persistance chiffrée et révocable sera nécessaire.
 2. Le stockage JSON deviendra fragile avec plusieurs requêtes et de gros historiques. Migrer vers SQLite avec contraintes d’appartenance et transactions.
-3. Les règles, skills, quotas, VPN et catalogue IA affichés ne sont pas tous appliqués côté serveur. Ne pas les présenter comme protections actives.
+3. Les règles et modèles sont appliqués côté serveur, mais les skills, quotas parallèles et routes VPN n’ont pas encore de moteur d’exécution. Ne pas les présenter comme capacités actives.
 4. La politique CSP autorise encore les scripts et styles inline pour conserver l’interface actuelle. Extraire le code inline afin de supprimer `unsafe-inline`.
 5. Aucun test navigateur automatisé complet, test mobile visuel, audit WCAG ou test de charge n’est encore présent.
 
