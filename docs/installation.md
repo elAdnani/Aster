@@ -46,6 +46,12 @@ Le futur installateur desktop devra :
 
 Aucun VPN, modèle, accès distant ou composant Tor ne doit être sélectionné automatiquement.
 
+## Écoute réseau avancée
+
+Le réglage par défaut `HOST=127.0.0.1` ne demande aucune configuration supplémentaire. Une écoute sur toutes les interfaces (`HOST=0.0.0.0` ou `HOST=::`) est refusée tant que `ASTER_ALLOWED_HOSTS` ne contient pas les noms ou adresses réellement utilisés, séparés par des virgules. Cette liste bloque les en-têtes détournés, mais ne fournit ni HTTPS ni identité distante : elle ne rend donc pas l’exposition publique sûre.
+
+`npm.cmd run doctor` contrôle cette cohérence sans afficher les valeurs des secrets.
+
 ## Mobile et web distant
 
 L’appairage futur utilisera un code court ou QR à durée limitée, lié à un compte et un profil précis. Il ne devra jamais exposer les réglages administrateur ou l’historique d’un autre profil. Voir `RULES.md` pour les frontières obligatoires.
