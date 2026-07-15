@@ -14,4 +14,7 @@ Avant chaque tag :
 3. vérifier que `data/`, `.env`, modèles, exports et secrets sont ignorés ;
 4. tester installation, connexion, profils, isolation et déconnexion ;
 5. mettre à jour la version et les notes de publication.
+6. produire et tester une archive `git archive` sans données ignorées ;
+7. vérifier les checks CI et CodeQL du commit exact de la branche de release ;
+8. confirmer que `main` local et distant n’ont pas divergé avant la fusion.
 
