@@ -25,6 +25,7 @@ const MAX_MESSAGES = 200;
 const MAX_CONTENT = 100_000;
 const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json', '.svg':'image/svg+xml', '.webmanifest':'application/manifest+json' };
 let mutation = Promise.resolve();
+let authMutation = Promise.resolve();
 
 function json(res, status, body) {
   res.writeHead(status, { ...securityHeaders(), 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' });
@@ -85,6 +86,17 @@ async function saveAuth(value) {
   const temporary = `${authFile}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding:'utf8', flag:'wx', mode:0o600 });
   await rename(temporary, authFile);
+}
+
+function mutateAuth(operation) {
+  const next = authMutation.then(async () => {
+    const auth = await loadAuth();
+    const result = await operation(auth);
+    await saveAuth(auth);
+    return result;
+  });
+  authMutation = next.catch(() => {});
+  return next;
 }
 
 function validateCredentials(input, setup = false) {
@@ -182,13 +194,14 @@ function mutateConversations(operation) {
 async function api(req, res, url) {
   if (url.pathname === '/api/auth/setup' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Configuration administrateur autorisée uniquement en local.' });
-    const auth = await loadAuth();
-    if (auth.users.length) return json(res, 409, { error:'Un administrateur existe déjà.' });
     const input = validateCredentials(await body(req), true);
     const password = await passwordHash(input.password);
     const profile = { id:randomUUID(), name:input.profileName };
     const user = { id:randomUUID(), username:input.username, role:'admin', passwordSalt:password.salt, passwordHash:password.hash, profiles:[profile], createdAt:new Date().toISOString() };
-    auth.users.push(user); await saveAuth(auth);
+    await mutateAuth((auth) => {
+      if (auth.users.length) throw Object.assign(new Error('Un administrateur existe déjà.'), { status:409 });
+      auth.users.push(user);
+    });
     startSession(res, user, profile.id);
     return json(res, 201, { user:{ id:user.id, username:user.username, role:user.role }, profiles:user.profiles, profile });
   }
@@ -228,13 +241,16 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/admin/profiles' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
-    const auth = await loadAuth(); const user = auth.users.find(item => item.id === session.userId);
-    if (!user || user.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
-    if (user.profiles.length >= 4) return json(res, 409, { error:'Limite de quatre profils atteinte.' });
     const input = await body(req); const name = String(input.name || '').trim();
     if (!name || name.length > 40) return json(res, 400, { error:'Nom de profil invalide.' });
-    const profile = { id:randomUUID(), name }; user.profiles.push(profile); await saveAuth(auth);
-    return json(res, 201, { profile, profiles:user.profiles });
+    const result = await mutateAuth((auth) => {
+      const user = auth.users.find(item => item.id === session.userId);
+      if (!user || user.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      if (user.profiles.length >= 4) throw Object.assign(new Error('Limite de quatre profils atteinte.'), { status:409 });
+      const profile = { id:randomUUID(), name }; user.profiles.push(profile);
+      return { profile, profiles:user.profiles };
+    });
+    return json(res, 201, result);
   }
   if (url.pathname === '/api/admin/overview' && req.method === 'GET') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
@@ -244,40 +260,47 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/admin/config' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
-    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
-    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
     const input = await body(req); const installationMode = String(input.installationMode || '');
     if (!['solo','family','custom'].includes(installationMode)) return json(res, 400, { error:'Configuration invalide.' });
-    if (installationMode === 'solo' && auth.users.length > 1) return json(res, 409, { error:'Supprimez les comptes supplémentaires avant de choisir Personnel.' });
-    auth.installationMode = installationMode; await saveAuth(auth);
+    await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      if (installationMode === 'solo' && auth.users.length > 1) throw Object.assign(new Error('Supprimez les comptes supplémentaires avant de choisir Personnel.'), { status:409 });
+      auth.installationMode = installationMode;
+    });
     return json(res, 200, { installationMode, maxUsers:installationMode === 'solo' ? 1 : 3 });
   }
   if (url.pathname === '/api/admin/users' && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
-    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
-    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
-    if (!auth.installationMode) return json(res, 409, { error:'Terminez d’abord la configuration administrateur.' });
-    const maxUsers = auth.installationMode === 'solo' ? 1 : 3;
-    if (auth.users.length >= maxUsers) return json(res, 409, { error:`Limite de ${maxUsers} compte(s) atteinte.` });
     const input = validateCredentials(await body(req), true);
-    if (auth.users.some(item => item.username === input.username)) return json(res, 409, { error:'Cet identifiant existe déjà.' });
     const password = await passwordHash(input.password); const profile = { id:randomUUID(), name:input.profileName };
     const user = { id:randomUUID(), username:input.username, role:'user', passwordSalt:password.salt, passwordHash:password.hash, profiles:[profile], createdAt:new Date().toISOString() };
-    auth.users.push(user); await saveAuth(auth);
+    await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      if (!auth.installationMode) throw Object.assign(new Error('Terminez d’abord la configuration administrateur.'), { status:409 });
+      const maxUsers = auth.installationMode === 'solo' ? 1 : 3;
+      if (auth.users.length >= maxUsers) throw Object.assign(new Error(`Limite de ${maxUsers} compte(s) atteinte.`), { status:409 });
+      if (auth.users.some(item => item.username === input.username)) throw Object.assign(new Error('Cet identifiant existe déjà.'), { status:409 });
+      auth.users.push(user);
+    });
     return json(res, 201, { user:{ id:user.id, username:user.username, role:user.role, profiles:user.profiles } });
   }
   const adminProfileMatch = url.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/profiles$/i);
   if (adminProfileMatch && req.method === 'POST') {
     if (!isLoopback(req)) return json(res, 403, { error:'Administration autorisée uniquement en local.' });
-    const auth = await loadAuth(); const administrator = auth.users.find(item => item.id === session.userId);
-    if (!administrator || administrator.role !== 'admin') return json(res, 403, { error:'Droits administrateur requis.' });
-    const user = auth.users.find(item => item.id === adminProfileMatch[1]);
-    if (!user) return json(res, 404, { error:'Compte introuvable.' });
-    if (user.profiles.length >= 4) return json(res, 409, { error:'Limite de quatre profils atteinte.' });
     const input = await body(req); const name = String(input.name || '').trim();
     if (!name || name.length > 40) return json(res, 400, { error:'Nom de profil invalide.' });
-    const profile = { id:randomUUID(), name }; user.profiles.push(profile); await saveAuth(auth);
-    return json(res, 201, { profile, profiles:user.profiles });
+    const result = await mutateAuth((auth) => {
+      const administrator = auth.users.find(item => item.id === session.userId);
+      if (!administrator || administrator.role !== 'admin') throw Object.assign(new Error('Droits administrateur requis.'), { status:403 });
+      const user = auth.users.find(item => item.id === adminProfileMatch[1]);
+      if (!user) throw Object.assign(new Error('Compte introuvable.'), { status:404 });
+      if (user.profiles.length >= 4) throw Object.assign(new Error('Limite de quatre profils atteinte.'), { status:409 });
+      const profile = { id:randomUUID(), name }; user.profiles.push(profile);
+      return { profile, profiles:user.profiles };
+    });
+    return json(res, 201, result);
   }
   const conversationMatch = url.pathname.match(/^\/api\/conversations\/([0-9a-f-]{36})$/i);
   if (url.pathname === '/api/conversations' && req.method === 'GET') {

@@ -143,6 +143,19 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal((await addedProfile.json()).profiles.length, 2);
   const overview = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
   assert.equal((await overview.json()).users.length, 2);
+  const concurrentUsers = await Promise.all(['membre2','membre3'].map(username => fetch(`http://127.0.0.1:${port}/api/admin/users`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' },
+    body:JSON.stringify({ username, password:'concurrent-strong-password', profileName:'Personnel' })
+  })));
+  assert.deepEqual(concurrentUsers.map(response => response.status).sort(), [201, 409]);
+  const concurrentProfiles = await Promise.all(['Loisirs','Études','Invité'].map(name => fetch(`http://127.0.0.1:${port}/api/admin/users/${member.id}/profiles`, {
+    method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ name })
+  })));
+  assert.deepEqual(concurrentProfiles.map(response => response.status).sort(), [201, 201, 409]);
+  const hardenedOverview = await fetch(`http://127.0.0.1:${port}/api/admin/overview`, { headers:{ cookie } });
+  const hardenedBody = await hardenedOverview.json();
+  assert.equal(hardenedBody.users.length, 3);
+  assert.equal(hardenedBody.users.find(user => user.id === member.id).profiles.length, 4);
   const selected = await fetch(`http://127.0.0.1:${port}/api/auth/profile`, {
     method:'POST', headers:{ cookie, 'content-type':'application/json' }, body:JSON.stringify({ profileId:loginBody.profile.id })
   });
