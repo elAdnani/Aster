@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../web', import.meta.url));
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 4317);
+const configuredHosts = String(process.env.ASTER_ALLOWED_HOSTS || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+const loopbackBinding = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+const allowedHostnames = new Set([...(loopbackBinding ? ['127.0.0.1','localhost','::1'] : []), ...(!['0.0.0.0','::'].includes(host) ? [host.toLowerCase()] : []), ...configuredHosts]);
 const ollama = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
 const remoteToken = process.env.ASTER_REMOTE_TOKEN || '';
 const scrypt = promisify(scryptCallback);
@@ -156,6 +159,17 @@ function sessionCookie(token, maxAge = Math.floor(SESSION_MS / 1000)) {
 function isLoopback(req) {
   const address = req.socket.remoteAddress || '';
   return address === '127.0.0.1' || address === '::1' || address.startsWith('::ffff:127.');
+}
+
+function hasAllowedHost(req) {
+  const value = req.headers.host;
+  if (typeof value !== 'string' || !value || allowedHostnames.size === 0) return false;
+  try {
+    const parsed = new URL(`http://${value}`);
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const requestPort = Number(parsed.port || 80);
+    return !parsed.username && !parsed.password && parsed.pathname === '/' && requestPort === port && allowedHostnames.has(hostname);
+  } catch { return false; }
 }
 
 const transactionalStores = { auth:authFile, projects:projectFile, tasks:taskFile, conversations:conversationFile };
@@ -1078,6 +1092,7 @@ async function staticFile(req, res, url) {
 
 const server = http.createServer(async (req,res) => {
   try {
+    if (!hasAllowedHost(req)) return json(res, 421, { error:'Hôte Aster non autorisé.' });
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     if (!['GET','HEAD','OPTIONS'].includes(req.method || 'GET') && req.headers.origin) {
       const origin = new URL(req.headers.origin); const expected = String(req.headers.host || '');
