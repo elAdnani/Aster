@@ -60,7 +60,6 @@ Le dépôt peut être publié comme **prototype expérimental**, mais pas encore
 
 ### Fonctionnalités incomplètes
 
-- Suppression/suspension de compte et profil avec gestion des données associées.
 - Dossiers/projets persistants et déplacement des conversations.
 - Recherche serveur dans le contenu des messages.
 - Planification persistante.
@@ -85,10 +84,8 @@ La suite couvre le service statique, la traversée de chemins, la protection API
 ## Ordre recommandé
 
 1. SQLite et migrations.
-2. PIN et cycle de vie comptes/profils.
-3. Règles/skills réellement appliqués côté serveur.
-4. Chiffrement au repos et sauvegardes.
-5. Sessions distantes et tunnel HTTPS.
-6. Projets, recherche plein texte et planification.
-7. Gestion des requêtes Ollama, files et parallélisme.
-8. Packaging desktop, tests multiplateformes et première bêta.
+2. Sauvegardes et récupération de la clé de chiffrement.
+3. Sessions distantes et tunnel HTTPS.
+4. Projets, recherche plein texte et planification.
+5. Runtime sandboxé pour les skills.
+6. Packaging desktop, tests multiplateformes et première bêta.

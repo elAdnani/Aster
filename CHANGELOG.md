@@ -12,6 +12,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Chiffrement AES-256-GCM des conversations avec dérivation HKDF par profil.
 - Politiques IA appliquées côté serveur : modèles, règles et skills déclarés.
 - File d’inférence FIFO et parallélisme indépendant par profil.
+- Suspension, réactivation et suppression protégée des comptes et profils avec révocation des sessions et nettoyage des conversations.
 - CI Node 20/22/24, CodeQL et processus de publication.
 
 ### Sécurité
