@@ -2,6 +2,32 @@
 
 Toutes les évolutions importantes d’Aster Local sont documentées ici. Le projet suit SemVer pour ses préversions.
 
+## [0.2.0-alpha.3] - 2026-07-15
+
+### Ajouté
+
+- Cycle de vie complet des comptes et profils avec révocation des sessions et nettoyage des données.
+- Sauvegarde/restauration chiffrée et validée, réservée à l’administrateur local.
+- Projets et planification chiffrés par profil, recherche serveur et déplacement des conversations.
+- Catalogue Gemma 4 vérifié avec installation Ollama explicite et progression.
+- Journal de transaction récupérable pour les mutations touchant plusieurs stockages.
+- Pièces jointes TXT, Markdown, JSON et CSV chiffrées, bornées et vérifiées côté serveur.
+- Liste et révocation des sessions du compte sans conservation d’adresse IP ni User-Agent complet.
+
+### Sécurité
+
+- CSP stricte sans `unsafe-inline` et ressources de l’application limitées à la même origine.
+- Actions GitHub officielles figées sur des SHA vérifiés.
+- Skill de design tiers sans provenance remplacé par un skill Aster minimal pour Claude et Codex.
+- Tests d’altération du stockage, d’injection dans les pièces jointes et d’isolation des profils.
+
+### Limites connues
+
+- Accès distant non prêt pour Internet public.
+- Clé de chiffrement stockée dans le même compte système que les données.
+- Sessions gardées uniquement en mémoire et perdues au redémarrage du service.
+- Runtime de skills, VPN/Tor et formats de pièces jointes binaires non implémentés.
+
 ## [0.2.0-alpha.2] - 2026-07-15
 
 ### Ajouté
@@ -12,13 +38,6 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Chiffrement AES-256-GCM des conversations avec dérivation HKDF par profil.
 - Politiques IA appliquées côté serveur : modèles, règles et skills déclarés.
 - File d’inférence FIFO et parallélisme indépendant par profil.
-- Suspension, réactivation et suppression protégée des comptes et profils avec révocation des sessions et nettoyage des conversations.
-- Sauvegarde portable chiffrée par phrase secrète et restauration locale avec validation intégrale et révocation de toutes les sessions.
-- Projets persistants chiffrés par profil, déplacement des conversations et recherche serveur isolée.
-- Planification chiffrée par profil avec échéances, tâches terminées et rattachement aux projets.
-- Catalogue Gemma 4 vérifié, détection des variantes installées et installation Ollama explicite avec progression.
-- File d’écriture globale et journal de transaction récupérable pour les mutations touchant plusieurs stockages.
-- Pièces jointes TXT, Markdown, JSON et CSV chiffrées avec quotas et rattachement vérifié côté serveur.
 - CI Node 20/22/24, CodeQL et processus de publication.
 
 ### Sécurité
@@ -26,9 +45,6 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 - Sessions `HttpOnly`, `SameSite=Strict`, révocables et gardées en mémoire.
 - Administration limitée au rôle administrateur et aux connexions loopback.
 - Mutations des fichiers JSON sérialisées et écritures atomiques.
-- Fichiers traités comme texte non fiable, jamais comme HTML ou instructions système.
-- CSP stricte sans `unsafe-inline`, avec bootstrap et styles chargés depuis des fichiers locaux dédiés.
-- Liste des sessions du compte avec catégorie d’appareil minimale, révocation individuelle et fermeture de toutes les autres sessions.
 - CSP, protection iframe, validation d’origine et limitation du login.
 - Suppression de l’adresse personnelle des métadonnées Git avant le premier push.
 
@@ -36,7 +52,7 @@ Toutes les évolutions importantes d’Aster Local sont documentées ici. Le pro
 
 - Accès distant non prêt pour Internet public.
 - Clé de chiffrement stockée dans le même compte système que les données.
-- Skills, VPN/Tor, formats de pièces jointes binaires et vues de planification avancées encore incomplets.
+- Skills, VPN/Tor et projets persistants encore incomplets.
 
 ## [0.1.0-alpha.1] - 2026-07-15
 

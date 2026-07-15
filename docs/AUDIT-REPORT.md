@@ -1,6 +1,6 @@
 # Aster Local — état, audit et feuille de route
 
-Date de l’audit : 15 juillet 2026. Version : prototype `0.2.0-alpha.2`.
+Date de l’audit : 15 juillet 2026. Version : release candidate `0.2.0-alpha.3`.
 
 ## Résumé exécutif
 
