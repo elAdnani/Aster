@@ -54,6 +54,9 @@ test('serves the application shell', async () => {
   assert.doesNotMatch(csp, /unsafe-inline/);
   assert.doesNotMatch(html, /<style>|<script>(?!\s*<\/script>)/i);
   assert.match(html, /bootstrap\.js/);
+  const appBundle = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
+  assert.match(appBundle, /function purgeWorkspace\(\)/);
+  assert.match(appBundle, /request\('\/api\/auth\/lock'/);
 });
 
 test('rejects untrusted Host headers to prevent DNS rebinding', async () => {
@@ -540,4 +543,12 @@ test('logs in locally and isolates conversations by profile', async () => {
   assert.equal(restoredTask.projectId, null);
   const deletedTask = await fetch(`http://127.0.0.1:${port}/api/tasks/${restoredTask.id}`, { method:'DELETE', headers:{ cookie:restoredCookie } });
   assert.equal(deletedTask.status, 200);
+  const locked = await fetch(`http://127.0.0.1:${port}/api/auth/lock`, { method:'POST', headers:{ cookie:restoredCookie } });
+  assert.equal(locked.status, 200);
+  const lockedCookie = locked.headers.get('set-cookie').split(';')[0];
+  assert.notEqual(lockedCookie, restoredCookie);
+  const lockedStatus = await fetch(`http://127.0.0.1:${port}/api/auth/status`, { headers:{ cookie:lockedCookie } });
+  assert.equal((await lockedStatus.json()).profile, null);
+  const lockedConversations = await fetch(`http://127.0.0.1:${port}/api/conversations`, { headers:{ cookie:lockedCookie } });
+  assert.equal(lockedConversations.status, 403);
 });

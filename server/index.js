@@ -653,6 +653,12 @@ async function api(req, res, url) {
   }
   let session = sessionFor(req);
   if (!session) return json(res, 401, { error:'Authentification requise.' });
+  if (url.pathname === '/api/auth/lock' && req.method === 'POST') {
+    if (session.userId === 'remote') return json(res, 403, { error:'Session distante non verrouillable.' });
+    session.profileId = null;
+    rotateSession(req, res, session);
+    return json(res, 200, { ok:true });
+  }
   if (url.pathname === '/api/auth/sessions' && req.method === 'GET') {
     if (session.userId === 'remote') return json(res, 200, { sessions:[] });
     const currentToken = cookie(req, 'aster_session');
